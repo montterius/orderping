@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OrderPing</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Manrope:wght@400;500;600;700&family=Courier+Prime:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#1b1f24;
+    --ink-soft:#6b7280;
+    --paper:#eef1ec;
+    --paper-line:#d7dccf;
+    --bell:#f2a33c;
+    --bell-dim:#c97f22;
+    --ready:#2bb673;
+    --surface-dark:#262b31;
+    --surface-dark-2:#30363d;
+    --danger:#e5484d;
+    --font-display:'Sora',system-ui,sans-serif;
+    --font-body:'Manrope',system-ui,sans-serif;
+    --font-mono:'Courier Prime','Courier New',monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{font-family:var(--font-body);background:var(--ink);color:var(--paper);min-height:100vh;}
+  body.mode-client{background:var(--paper);color:var(--ink);}
+  h1,h2,h3{font-family:var(--font-display);margin:0;}
+  [hidden]{display:none!important;}
+  button{font-family:inherit;cursor:pointer;}
+
+  .pill{display:inline-flex;align-items:center;gap:.4em;font-size:.72rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:.35em .8em;border-radius:999px;}
+
+  /* ROLE CHOOSER */
+  #role-chooser{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:28px 18px;}
+  .chooser-card{max-width:420px;width:100%;text-align:center;}
+  .chooser-card .bell-big{font-size:2.6rem;display:block;margin-bottom:6px;}
+  .chooser-card h1{font-size:1.6rem;color:#fff;font-weight:800;margin-bottom:6px;}
+  .chooser-card .sub{color:var(--ink-soft);font-size:.92rem;margin-bottom:28px;line-height:1.5;}
+  .role-btn{display:flex;align-items:center;gap:14px;width:100%;text-align:left;background:var(--surface-dark);border:1px solid #343b42;border-radius:14px;padding:18px 20px;margin-bottom:14px;color:var(--paper);}
+  .role-btn:hover{border-color:var(--bell);background:var(--surface-dark-2);}
+  .role-btn .emoji{font-size:1.6rem;flex:none;}
+  .role-btn .txt b{display:block;font-family:var(--font-display);font-size:1rem;margin-bottom:2px;}
+  .role-btn .txt span{font-size:.82rem;color:var(--ink-soft);}
+  .chooser-note{font-size:.78rem;color:var(--ink-soft);margin-top:18px;line-height:1.5;}
+
+  /* KITCHEN */
+  #kitchen-view{max-width:1100px;margin:0 auto;padding:28px 20px 80px;}
+  .k-header{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:18px;}
+  .k-brand{display:flex;align-items:center;gap:12px;}
+  .k-brand .bell{font-size:1.8rem;}
+  .k-brand h1{font-size:1.5rem;font-weight:800;color:#fff;}
+  .k-brand .sub{font-size:.8rem;color:var(--ink-soft);margin-top:2px;}
+  .k-pill{background:var(--surface-dark-2);color:var(--bell);border:1px solid #3a4048;}
+
+  .k-new{display:flex;align-items:center;gap:10px;background:var(--bell);color:#231404;font-weight:800;font-family:var(--font-display);border:none;border-radius:12px;padding:14px 22px;font-size:1rem;box-shadow:0 6px 18px -6px rgba(242,163,60,.55);margin-bottom:8px;}
+  .k-new:hover{background:#ffb75a;}
+
+  .k-columns{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:26px;}
+  @media (max-width:720px){.k-columns{grid-template-columns:1fr;}}
+  .k-col h2{font-size:.78rem;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:12px;display:flex;align-items:center;gap:8px;}
+  .k-col .count{background:var(--surface-dark-2);color:var(--paper);border-radius:999px;font-size:.72rem;padding:.15em .6em;font-family:var(--font-mono);}
+  .k-empty{color:var(--ink-soft);font-size:.88rem;padding:18px;border:1px dashed #3a4048;border-radius:12px;text-align:center;}
+
+  .ticket{background:var(--surface-dark);border:1px solid #343b42;border-radius:14px;padding:16px 18px;margin-bottom:14px;position:relative;overflow:hidden;}
+  .ticket::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--bell);}
+  .ticket.ready::before{background:var(--ready);}
+  .ticket-top{display:flex;align-items:baseline;justify-content:space-between;gap:10px;}
+  .ticket-num{font-family:var(--font-mono);font-weight:700;font-size:1.9rem;color:#fff;}
+  .ticket-num .hash{color:var(--ink-soft);font-weight:400;font-size:1.2rem;margin-right:2px;}
+  .ticket-time{font-family:var(--font-mono);font-size:.82rem;color:var(--ink-soft);}
+  .ticket.ready .ticket-time{color:var(--ready);}
+  .ticket-status{margin:8px 0 12px;}
+  .status-pending{background:rgba(242,163,60,.15);color:var(--bell);}
+  .status-ready{background:rgba(43,182,115,.16);color:var(--ready);}
+  .ticket-hint{font-size:.78rem;color:var(--ink-soft);margin-bottom:12px;}
+  .btn{border:none;border-radius:9px;padding:10px 14px;font-size:.85rem;font-weight:700;font-family:var(--font-body);}
+  .btn-ready{background:var(--ready);color:#04170d;}
+  .btn-ready:hover{background:#3fd18a;}
+  .btn-done{background:var(--surface-dark-2);color:var(--paper);border:1px solid #454c55;}
+  .btn-done:hover{background:#3a4148;}
+
+  .role-switch{display:block;margin:26px auto 0;text-align:center;background:none;border:none;color:var(--ink-soft);font-size:.78rem;text-decoration:underline;}
+  .role-switch:hover{color:var(--bell);}
+
+  .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);background:#fff;color:var(--ink);padding:10px 18px;border-radius:10px;font-size:.85rem;font-weight:600;opacity:0;transition:opacity .25s ease,transform .25s ease;pointer-events:none;box-shadow:0 10px 30px -8px rgba(0,0,0,.4);max-width:80vw;text-align:center;}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+  /* CLIENT */
+  #client-view{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:28px 18px;}
+  .receipt{width:100%;max-width:380px;background:#fff;border-radius:4px;padding:34px 28px 30px;text-align:center;position:relative;box-shadow:0 30px 60px -25px rgba(27,31,36,.35);transition:background .4s ease;}
+  .receipt::before,.receipt::after{content:"";position:absolute;left:0;right:0;height:14px;background-image:radial-gradient(circle,var(--paper) 6px,transparent 6.5px);background-size:20px 20px;background-position:0 0;}
+  .receipt::before{top:-7px;}
+  .receipt::after{bottom:-7px;background-position:10px 0;}
+  .receipt.state-ready{background:#f2fbf6;}
+  .r-brand{display:flex;align-items:center;justify-content:center;gap:8px;color:var(--ink-soft);font-size:.78rem;letter-spacing:.12em;text-transform:uppercase;margin-bottom:18px;}
+  .r-rule{border:none;border-top:1px dashed var(--paper-line);margin:18px 0;}
+  .r-label{font-size:.74rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:6px;}
+  .r-number{font-family:var(--font-mono);font-weight:700;font-size:3.4rem;line-height:1;color:var(--ink);}
+  .r-number .hash{color:var(--ink-soft);font-size:1.8rem;}
+  .r-status-line{margin-top:18px;font-family:var(--font-display);font-weight:700;font-size:1.15rem;}
+  .r-substatus{font-size:.88rem;color:var(--ink-soft);margin-top:6px;line-height:1.5;}
+  .r-dots span{animation:blink 1.4s infinite;opacity:.2;}
+  .r-dots span:nth-child(2){animation-delay:.2s;}
+  .r-dots span:nth-child(3){animation-delay:.4s;}
+  @keyframes blink{0%,80%,100%{opacity:.2;}40%{opacity:1;}}
+  .r-ready-badge{display:inline-flex;align-items:center;justify-content:center;width:74px;height:74px;border-radius:50%;background:var(--ready);color:#fff;font-size:2rem;margin:6px auto 4px;animation:pop .5s cubic-bezier(.34,1.56,.64,1);}
+  @keyframes pop{0%{transform:scale(.4);opacity:0;}100%{transform:scale(1);opacity:1;}}
+  .r-ready-badge.pulse{animation:pop .5s cubic-bezier(.34,1.56,.64,1),pulse 1.6s ease-in-out 2;}
+  @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(43,182,115,.5);}50%{box-shadow:0 0 0 16px rgba(43,182,115,0);}}
+  .r-start-btn{margin-top:22px;width:100%;background:var(--ink);color:#fff;border:none;border-radius:10px;padding:14px;font-weight:700;font-family:var(--font-display);font-size:.95rem;}
+  .r-start-btn:hover{background:#33393f;}
+  .r-note{font-size:.76rem;color:var(--ink-soft);margin-top:16px;line-height:1.5;}
+  .r-limits{font-size:.72rem;color:var(--ink-soft);margin-top:10px;opacity:.85;}
+  .code-input{width:100%;font-family:var(--font-mono);font-size:2.2rem;text-align:center;letter-spacing:.08em;border:2px solid var(--paper-line);border-radius:10px;padding:12px;margin:14px 0;color:var(--ink);background:#fff;}
+  .code-input:focus{outline:none;border-color:var(--bell);}
+  .btn-track{width:100%;background:var(--bell);color:#231404;border:none;border-radius:10px;padding:14px;font-weight:800;font-family:var(--font-display);font-size:.95rem;}
+  .btn-track:hover{background:#ffb75a;}
+  .lookup-error{color:var(--danger);font-size:.84rem;margin-top:10px;line-height:1.4;}
+  .find-other{display:block;margin-top:18px;background:none;border:none;color:var(--ink-soft);font-size:.82rem;text-decoration:underline;}
+  .find-other:hover{color:var(--bell-dim);}
+  @media (prefers-reduced-motion: reduce){.r-dots span,.r-ready-badge,.r-ready-badge.pulse{animation:none!important;}}
+</style>
+</head>
+<body>
+
+<section id="role-chooser">
+  <div class="chooser-card">
+    <span class="bell-big">🔔</span>
+    <h1>OrderPing</h1>
+    <p class="sub">Alege ce rol testezi acum pe acest dispozitiv.</p>
+    <button class="role-btn" id="pick-kitchen">
+      <span class="emoji">🍳</span>
+      <span class="txt"><b>Sunt personal de bucătărie</b><span>Marchez comenzile ca fiind gata</span></span>
+    </button>
+    <button class="role-btn" id="pick-client">
+      <span class="emoji">🧾</span>
+      <span class="txt"><b>Am o comandă de urmărit</b><span>Am numărul de pe bon și aștept să fie gata</span></span>
+    </button>
+    <p class="chooser-note">Acum notificările funcționează cu adevărat — chiar și cu telefonul blocat.</p>
+  </div>
+</section>
+
+<section id="kitchen-view" hidden>
+  <div class="k-header">
+    <div class="k-brand">
+      <span class="bell">🔔</span>
+      <div><h1>OrderPing &middot; Panou Bucătărie</h1><div class="sub">Aici bucătăria marchează comenzile ca fiind gata</div></div>
+    </div>
+    <span class="pill k-pill">LIVE</span>
+  </div>
+
+  <button class="k-new" id="btn-new-order">＋ Comandă nouă</button>
+
+  <div class="k-columns">
+    <div class="k-col"><h2>În pregătire <span class="count" id="count-pending">0</span></h2><div id="list-pending"></div></div>
+    <div class="k-col"><h2>Gata de ridicare <span class="count" id="count-ready">0</span></h2><div id="list-ready"></div></div>
+  </div>
+
+  <button class="role-switch" id="switch-from-kitchen">🔄 Schimbă rolul / testează ca și client</button>
+</section>
+
+<section id="client-view" hidden>
+  <div class="receipt" id="receipt-card">
+    <div class="r-brand">🔔 OrderPing</div>
+
+    <div id="client-lookup">
+      <div class="r-label">Introdu numărul comenzii tale</div>
+      <p class="r-substatus">Găsești numărul pe bonul de la casă.</p>
+      <input type="text" inputmode="numeric" maxlength="3" class="code-input" id="order-code-input" placeholder="482">
+      <button class="btn-track" id="btn-track">Urmărește comanda</button>
+      <p class="lookup-error" id="lookup-error" hidden></p>
+    </div>
+
+    <div id="client-tracking" hidden>
+      <div class="r-label">Numărul comenzii tale</div>
+      <div class="r-number"><span class="hash">#</span><span id="r-number-val">000</span></div>
+      <hr class="r-rule">
+
+      <div id="r-start-screen">
+        <p class="r-substatus">Apasă butonul de mai jos ca să activezi notificarea reală pe telefon.</p>
+        <button class="r-start-btn" id="btn-start-waiting">Anunță-mă când e gata 🔔</button>
+      </div>
+
+      <div id="r-waiting-screen" hidden>
+        <div class="r-status-line">Se pregătește<span class="r-dots"><span>.</span><span>.</span><span>.</span></span></div>
+        <p class="r-substatus" id="r-waiting-sub">Poți bloca ecranul — te anunțăm automat.</p>
+      </div>
+
+      <div id="r-ready-screen" hidden>
+        <div class="r-ready-badge" id="r-ready-badge">✅</div>
+        <div class="r-status-line">Comanda ta e gata!</div>
+        <p class="r-substatus">Poți să o ridici de la tejghea, când vrei.</p>
+      </div>
+
+      <div id="r-done-screen" hidden>
+        <div class="r-status-line" style="color:var(--ink-soft)">Comandă ridicată</div>
+        <p class="r-substatus">Mulțumim! Poftă bună.</p>
+      </div>
+
+      <p class="r-limits" id="r-limits-note" hidden></p>
+      <button class="find-other" id="btn-find-other">Nu e comanda ta? Caută alt număr</button>
+    </div>
+  </div>
+  <button class="role-switch" id="switch-from-client">🔄 Schimbă rolul / testează ca bucătărie</button>
+</section>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  "use strict";
+
+  var ROLE_KEY = 'orderping_role';
+  var LAST_ORDER_KEY = 'orderping_last_order_id';
+
+  function safeGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+  function safeSet(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+  function safeRemove(k){ try{ localStorage.removeItem(k); }catch(e){} }
+
+  function showToast(msg){
+    var t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(function(){ t.classList.remove('show'); }, 2400);
+  }
+
+  function fmtElapsed(createdAt){
+    var s = Math.max(0, Math.floor((Date.now() - createdAt) / 1000));
+    var m = Math.floor(s / 60), r = s % 60;
+    return (m<10?'0':'')+m+':'+(r<10?'0':'')+r;
+  }
+
+  function api(path, opts){
+    return fetch(path, opts).then(function(r){
+      return r.json().then(function(data){
+        if(!r.ok) throw Object.assign(new Error('http_error'), {status:r.status, data:data});
+        return data;
+      });
+    });
+  }
+
+  // ================= ROLE ROUTING =================
+  function goToRole(role){ safeSet(ROLE_KEY, role); render(); }
+  function resetRole(){ safeRemove(ROLE_KEY); safeRemove(LAST_ORDER_KEY); location.reload(); }
+
+  document.getElementById('pick-kitchen').addEventListener('click', function(){ goToRole('kitchen'); });
+  document.getElementById('pick-client').addEventListener('click', function(){ goToRole('client'); });
+  document.getElementById('switch-from-kitchen').addEventListener('click', resetRole);
+  document.getElementById('switch-from-client').addEventListener('click', resetRole);
+
+  var kitchenStarted = false, clientStarted = false;
+
+  function render(){
+    var role = safeGet(ROLE_KEY);
+    document.body.classList.remove('mode-kitchen','mode-client');
+    document.getElementById('role-chooser').hidden = true;
+    document.getElementById('kitchen-view').hidden = true;
+    document.getElementById('client-view').hidden = true;
+
+    if(role === 'kitchen'){
+      document.body.classList.add('mode-kitchen');
+      document.getElementById('kitchen-view').hidden = false;
+      if(!kitchenStarted){ kitchenStarted = true; initKitchen(); }
+    } else if(role === 'client'){
+      document.body.classList.add('mode-client');
+      document.getElementById('client-view').hidden = false;
+      if(!clientStarted){ clientStarted = true; initClient(); }
+    } else {
+      document.getElementById('role-chooser').hidden = false;
+    }
+  }
+
+  // ================= KITCHEN =================
+  function initKitchen(){
+    var pendingList = document.getElementById('list-pending');
+    var readyList = document.getElementById('list-ready');
+    var countPending = document.getElementById('count-pending');
+    var countReady = document.getElementById('count-ready');
+
+    function renderTicket(o){
+      var isReady = o.status === 'ready';
+      var wrap = document.createElement('div');
+      wrap.className = 'ticket' + (isReady ? ' ready' : '');
+      wrap.innerHTML =
+        '<div class="ticket-top">'+
+          '<div class="ticket-num"><span class="hash">#</span>'+o.number+'</div>'+
+          '<div class="ticket-time" data-created="'+o.createdAt+'">'+fmtElapsed(o.createdAt)+'</div>'+
+        '</div>'+
+        '<div class="ticket-status pill '+(isReady?'status-ready':'status-pending')+'">'+(isReady?'● gata':'● se pregătește')+'</div>'+
+        '<div class="ticket-hint">Spune-i clientului numărul <b>#'+o.number+'</b>.</div>'+
+        '<div class="ticket-actions">'+
+          (isReady
+            ? '<button class="btn btn-done" data-action="done">Ridicată de client</button>'
+            : '<button class="btn btn-ready" data-action="ready">Comanda e gata ✅</button>') +
+        '</div>';
+
+      var readyBtn = wrap.querySelector('[data-action="ready"]');
+      if(readyBtn){
+        readyBtn.addEventListener('click', function(){
+          api('/api/orders/'+o.id+'/ready', {method:'POST'}).catch(function(){ showToast('Nu am putut actualiza comanda.'); });
+        });
+      }
+      var doneBtn = wrap.querySelector('[data-action="done"]');
+      if(doneBtn){
+        doneBtn.addEventListener('click', function(){
+          api('/api/orders/'+o.id+'/done', {method:'POST'}).catch(function(){});
+        });
+      }
+      return wrap;
+    }
+
+    function refresh(){
+      api('/api/orders').then(function(list){
+        var pending = list.filter(function(o){ return o.status === 'pending'; });
+        var ready = list.filter(function(o){ return o.status === 'ready'; }).sort(function(a,b){ return (b.readyAt||0)-(a.readyAt||0); });
+
+        countPending.textContent = pending.length;
+        countReady.textContent = ready.length;
+
+        pendingList.innerHTML = '';
+        if(pending.length === 0) pendingList.innerHTML = '<div class="k-empty">Nicio comandă în pregătire.</div>';
+        else pending.forEach(function(o){ pendingList.appendChild(renderTicket(o)); });
+
+        readyList.innerHTML = '';
+        if(ready.length === 0) readyList.innerHTML = '<div class="k-empty">Nimic gata încă.</div>';
+        else ready.forEach(function(o){ readyList.appendChild(renderTicket(o)); });
+      }).catch(function(){ /* conexiune momentan indisponibila, incercam iar la urmatoarea reimprospatare */ });
+    }
+
+    document.getElementById('btn-new-order').addEventListener('click', function(){
+      api('/api/orders', {method:'POST'}).then(function(o){
+        showToast('Comanda #'+o.number+' a fost creată.');
+        refresh();
+      }).catch(function(){ showToast('Nu am putut crea comanda.'); });
+    });
+
+    setInterval(function(){
+      document.querySelectorAll('.ticket-time[data-created]').forEach(function(el){
+        el.textContent = fmtElapsed(parseInt(el.getAttribute('data-created'),10));
+      });
+    }, 1000);
+
+    refresh();
+    setInterval(refresh, 2000);
+  }
+
+  // ================= CLIENT =================
+  function urlBase64ToUint8Array(base64String){
+    var padding = '='.repeat((4 - base64String.length % 4) % 4);
+    var base64 = (base64String + padding).replace(/-/g,'+').replace(/_/g,'/');
+    var rawData = atob(base64);
+    var outputArray = new Uint8Array(rawData.length);
+    for (var i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
+    return outputArray;
+  }
+
+  function initClient(){
+    var elLookup = document.getElementById('client-lookup');
+    var elTracking = document.getElementById('client-tracking');
+    var elInput = document.getElementById('order-code-input');
+    var elError = document.getElementById('lookup-error');
+    var elNumberVal = document.getElementById('r-number-val');
+    var elStart = document.getElementById('r-start-screen');
+    var elWaiting = document.getElementById('r-waiting-screen');
+    var elWaitingSub = document.getElementById('r-waiting-sub');
+    var elReady = document.getElementById('r-ready-screen');
+    var elDone = document.getElementById('r-done-screen');
+    var elLimits = document.getElementById('r-limits-note');
+    var card = document.getElementById('receipt-card');
+
+    var audioCtx = null;
+    var hasStarted = false;
+    var lastStatus = null;
+    var pollTimer = null;
+    var currentOrderId = null;
+    var pushEnabled = false;
+
+    function beep(){
+      try{
+        audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+        var now = audioCtx.currentTime;
+        [[880,now],[1175,now+0.18]].forEach(function(pair){
+          var osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+          osc.type = 'sine'; osc.frequency.value = pair[0];
+          gain.gain.setValueAtTime(0.0001, pair[1]);
+          gain.gain.exponentialRampToValueAtTime(0.35, pair[1]+0.02);
+          gain.gain.exponentialRampToValueAtTime(0.0001, pair[1]+0.3);
+          osc.connect(gain).connect(audioCtx.destination);
+          osc.start(pair[1]); osc.stop(pair[1]+0.32);
+        });
+      }catch(e){}
+    }
+
+    function notifyForeground(){
+      beep();
+      if(navigator.vibrate){ navigator.vibrate([250,120,250,120,500]); }
+      var original = document.title, flashes = 0;
+      var t = setInterval(function(){
+        document.title = (document.title === original) ? '🔔 GATA! comanda ta' : original;
+        flashes++; if(flashes > 8){ clearInterval(t); document.title = original; }
+      }, 900);
+    }
+
+    function enablePush(orderId){
+      if(!('serviceWorker' in navigator) || !('PushManager' in window)){
+        return Promise.resolve({ok:false, reason:'unsupported'});
+      }
+      return navigator.serviceWorker.register('/sw.js').then(function(){
+        return navigator.serviceWorker.ready;
+      }).then(function(reg){
+        return Notification.requestPermission().then(function(perm){
+          if(perm !== 'granted') return {ok:false, reason:'denied'};
+          return fetch('/api/vapid-public-key').then(function(r){ return r.json(); }).then(function(data){
+            return reg.pushManager.subscribe({
+              userVisibleOnly: true,
+              applicationServerKey: urlBase64ToUint8Array(data.publicKey)
+            });
+          }).then(function(sub){
+            return fetch('/api/orders/'+orderId+'/subscribe', {
+              method:'POST', headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({subscription: sub.toJSON()})
+            });
+          }).then(function(){ return {ok:true}; });
+        });
+      }).catch(function(err){ return {ok:false, reason:'error', err:err}; });
+    }
+
+    document.getElementById('btn-start-waiting').addEventListener('click', function(){
+      hasStarted = true;
+      try{ audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }catch(e){}
+      elStart.hidden = true;
+
+      if(lastStatus === 'ready') elReady.hidden = false;
+      else if(lastStatus === 'done') elDone.hidden = false;
+      else elWaiting.hidden = false;
+
+      enablePush(currentOrderId).then(function(res){
+        if(res.ok){
+          pushEnabled = true;
+          elWaitingSub.textContent = 'Poți bloca ecranul sau închide telefonul în buzunar — te anunțăm automat.';
+        } else if(res.reason === 'denied'){
+          elWaitingSub.textContent = 'Nu ai permis notificările — ține pagina deschisă și cu ecranul pornit ca să auzi alerta.';
+        } else {
+          elWaitingSub.textContent = 'Notificarea în fundal nu e susținută de acest telefon/browser — ține pagina deschisă ca să auzi alerta.';
+        }
+        if(!navigator.vibrate){ elLimits.hidden = false; elLimits.textContent = 'Notă: pe iPhone, vibrația nu e susținută de Safari (limitare Apple) — dar sunetul/notificarea vor funcționa.'; }
+      });
+    });
+
+    function applyStatus(o){
+      var changed = (lastStatus !== null && lastStatus !== o.status);
+      lastStatus = o.status;
+      elNumberVal.textContent = o.number;
+      if(!hasStarted) return;
+
+      elWaiting.hidden = o.status !== 'pending';
+      elReady.hidden = o.status !== 'ready';
+      elDone.hidden = o.status !== 'done';
+      card.classList.toggle('state-ready', o.status === 'ready');
+
+      if(changed && o.status === 'ready'){
+        document.getElementById('r-ready-badge').classList.add('pulse');
+        notifyForeground();
+      }
+    }
+
+    function startTracking(orderId){
+      if(pollTimer){ clearInterval(pollTimer); pollTimer = null; }
+      currentOrderId = orderId;
+      hasStarted = false; lastStatus = null;
+      elStart.hidden = false; elWaiting.hidden = true; elReady.hidden = true; elDone.hidden = true; elLimits.hidden = true;
+      card.classList.remove('state-ready');
+
+      function poll(){
+        api('/api/orders/'+orderId).then(function(o){
+          safeSet(LAST_ORDER_KEY, orderId);
+          elLookup.hidden = true; elTracking.hidden = false;
+          applyStatus(o);
+        }).catch(function(err){
+          if(err.status === 404){
+            safeRemove(LAST_ORDER_KEY);
+            clearInterval(pollTimer); pollTimer = null;
+            elTracking.hidden = true; elLookup.hidden = false;
+            elError.hidden = false;
+            elError.textContent = 'Comanda nu mai există. Verifică numărul.';
+          }
+        });
+      }
+      poll();
+      pollTimer = setInterval(poll, 2000);
+    }
+
+    function doLookup(){
+      var raw = elInput.value.trim();
+      var num = parseInt(raw, 10);
+      elError.hidden = true;
+      if(!raw || isNaN(num)){
+        elError.hidden = false; elError.textContent = 'Introdu un număr valid (cel de pe bon).';
+        return;
+      }
+      api('/api/orders/by-number/'+num).then(function(o){
+        startTracking(o.id);
+      }).catch(function(err){
+        elError.hidden = false;
+        elError.textContent = (err.status === 404)
+          ? ('Nu am găsit nicio comandă cu numărul #'+num+'. Verifică din nou pe bon.')
+          : 'A apărut o eroare la căutare. Încearcă din nou.';
+      });
+    }
+
+    document.getElementById('btn-track').addEventListener('click', doLookup);
+    elInput.addEventListener('keydown', function(e){ if(e.key === 'Enter') doLookup(); });
+
+    document.getElementById('btn-find-other').addEventListener('click', function(){
+      if(pollTimer){ clearInterval(pollTimer); pollTimer = null; }
+      safeRemove(LAST_ORDER_KEY);
+      elTracking.hidden = true; elLookup.hidden = false;
+      elInput.value = ''; elError.hidden = true; elInput.focus();
+    });
+
+    var lastOrderId = safeGet(LAST_ORDER_KEY);
+    if(lastOrderId) startTracking(lastOrderId);
+  }
+
+  render();
+})();
+</script>
+</body>
+</html>
