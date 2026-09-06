@@ -380,16 +380,24 @@
     function beep(){
       try{
         audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-        var now = audioCtx.currentTime;
-        [[880,now],[1175,now+0.18]].forEach(function(pair){
-          var osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
-          osc.type = 'sine'; osc.frequency.value = pair[0];
-          gain.gain.setValueAtTime(0.0001, pair[1]);
-          gain.gain.exponentialRampToValueAtTime(0.35, pair[1]+0.02);
-          gain.gain.exponentialRampToValueAtTime(0.0001, pair[1]+0.3);
-          osc.connect(gain).connect(audioCtx.destination);
-          osc.start(pair[1]); osc.stop(pair[1]+0.32);
-        });
+        var playTones = function(){
+          var now = audioCtx.currentTime;
+          [[880,now],[1175,now+0.18]].forEach(function(pair){
+            var osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+            osc.type = 'sine'; osc.frequency.value = pair[0];
+            gain.gain.setValueAtTime(0.0001, pair[1]);
+            gain.gain.exponentialRampToValueAtTime(0.35, pair[1]+0.02);
+            gain.gain.exponentialRampToValueAtTime(0.0001, pair[1]+0.3);
+            osc.connect(gain).connect(audioCtx.destination);
+            osc.start(pair[1]); osc.stop(pair[1]+0.32);
+          });
+        };
+        // iOS/Safari suspenda deseori AudioContext; il "trezim" inainte de a canta tonul
+        if(audioCtx.state === 'suspended'){
+          audioCtx.resume().then(playTones).catch(function(){});
+        } else {
+          playTones();
+        }
       }catch(e){}
     }
 
@@ -427,9 +435,21 @@
       }).catch(function(err){ return {ok:false, reason:'error', err:err}; });
     }
 
+    var isIOS = /iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    var isStandalone = (window.navigator.standalone === true) || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+
     document.getElementById('btn-start-waiting').addEventListener('click', function(){
       hasStarted = true;
-      try{ audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }catch(e){}
+      try{
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if(audioCtx.state === 'suspended'){ audioCtx.resume(); }
+        // "incalzim" un sunet mut, ca sa deblocam definitiv sunetul pe iPhone/Safari
+        var warm = audioCtx.createOscillator();
+        var warmGain = audioCtx.createGain();
+        warmGain.gain.value = 0;
+        warm.connect(warmGain).connect(audioCtx.destination);
+        warm.start(); warm.stop(audioCtx.currentTime + 0.01);
+      }catch(e){}
       elStart.hidden = true;
 
       if(lastStatus === 'ready') elReady.hidden = false;
@@ -442,10 +462,12 @@
           elWaitingSub.textContent = 'Poți bloca ecranul sau închide telefonul în buzunar — te anunțăm automat.';
         } else if(res.reason === 'denied'){
           elWaitingSub.textContent = 'Nu ai permis notificările — ține pagina deschisă și cu ecranul pornit ca să auzi alerta.';
+        } else if(isIOS && !isStandalone){
+          elWaitingSub.textContent = 'Pe iPhone: ca să primești alerta chiar și cu ecranul blocat, adaugă acest site pe ecranul principal (butonul Distribuie ⬆️ → „Adaugă pe ecranul principal") și deschide-l de acolo, ca pe o aplicație. Până atunci, ține pagina deschisă și ecranul pornit ca să auzi sunetul.';
         } else {
           elWaitingSub.textContent = 'Notificarea în fundal nu e susținută de acest telefon/browser — ține pagina deschisă ca să auzi alerta.';
         }
-        if(!navigator.vibrate){ elLimits.hidden = false; elLimits.textContent = 'Notă: pe iPhone, vibrația nu e susținută de Safari (limitare Apple) — dar sunetul/notificarea vor funcționa.'; }
+        if(!navigator.vibrate){ elLimits.hidden = false; elLimits.textContent = 'Notă: pe iPhone, vibrația nu e susținută (limitare Apple) — dar sunetul va funcționa cât timp ții pagina deschisă și ecranul pornit.'; }
       });
     });
 
