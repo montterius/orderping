@@ -1,7 +1,7 @@
 // OrderPing - server minimal
 // ---------------------------------------------------------
 // Ce face acest fisier:
-//  - tine minte comenzile intr-o lista simpla (in memorie)
+//  - tine minte comenzile intr-o baza de date reala (MongoDB), nu se mai pierd
 //  - ofera cateva adrese ("API") pe care pagina web le foloseste:
 //      POST /api/orders                -> creeaza o comanda noua
 //      GET  /api/orders                -> lista comenzilor active (pt panoul bucatariei)
@@ -12,15 +12,14 @@
 //      POST /api/orders/:id/subscribe  -> telefonul clientului se "aboneaza" la notificari
 //      GET  /api/vapid-public-key      -> cheia publica necesara pt notificari push
 //
-// NOTA IMPORTANTA: comenzile se tin in memorie (o simpla lista in RAM).
-// Daca serverul reporneste (de ex. planul gratuit Render "adoarme" dupa
-// inactivitate), lista se goleste. E perfect pentru un pilot/demo -
-// pentru productie reala, urmatorul pas ar fi o baza de date adevarata.
+// NOTA: comenzile se tin acum in MongoDB (baza de date persistenta), nu mai
+// in memorie - asa ca nu se pierd cand serverul reporneste/adoarme.
 
 const express = require('express');
 const webpush = require('web-push');
 const crypto = require('crypto');
 const path = require('path');
+const { MongoClient } = require('mongodb');
 
 const app = express();
 app.use(express.json());
@@ -41,13 +40,27 @@ webpush.setVapidDetails(
 );
 
 // ---------------------------------------------------------
-// "Baza de date" - o lista simpla in memorie.
-// Map: id comanda -> obiect comanda
-const orders = new Map();
+// Conectarea la baza de date (MongoDB Atlas).
+// Adresa vine dintr-o variabila de mediu (Environment Variable) setata
+// pe Render - NU e scrisa direct in cod, ca sa nu fie vizibila pe GitHub.
+const MONGODB_URI = process.env.MONGODB_URI;
+if (!MONGODB_URI) {
+  console.error('LIPSESTE variabila de mediu MONGODB_URI. Seteaz-o in Render, in sectiunea "Environment".');
+}
+
+let ordersCollection = null;
+
+async function connectToDatabase() {
+  const client = new MongoClient(MONGODB_URI);
+  await client.connect();
+  const db = client.db(); // foloseste baza de date din adresa (ex: "orderping")
+  ordersCollection = db.collection('orders');
+  console.log('Conectat la MongoDB.');
+}
 
 function publicOrder(o) {
   return {
-    id: o.id,
+    id: o._id,
     number: o.number,
     status: o.status,
     createdAt: o.createdAt,
@@ -55,15 +68,19 @@ function publicOrder(o) {
   };
 }
 
-function pruneOldOrders() {
+async function pruneOldOrders() {
   const now = Date.now();
-  for (const [id, o] of orders) {
-    const ageMs = now - o.createdAt;
-    if (o.status === 'done' && ageMs > 60 * 60 * 1000) orders.delete(id); // ridicate de > 1h
-    else if (ageMs > 6 * 60 * 60 * 1000) orders.delete(id); // orice comanda mai veche de 6h
+  try {
+    await ordersCollection.deleteMany({
+      $or: [
+        { status: 'done', doneAt: { $lt: now - 60 * 60 * 1000 } }, // ridicate de > 1h
+        { createdAt: { $lt: now - 6 * 60 * 60 * 1000 } }, // orice comanda mai veche de 6h
+      ],
+    });
+  } catch (err) {
+    console.error('Eroare la stergerea comenzilor vechi:', err);
   }
 }
-setInterval(pruneOldOrders, 10 * 60 * 1000);
 
 // ---------------------------------------------------------
 // Trimite notificarea reala (push) catre toate telefoanele
@@ -73,11 +90,11 @@ async function notifyOrderReady(order) {
   const payload = JSON.stringify({
     title: '🔔 Comanda ta e gata!',
     body: 'Comanda #' + order.number + ' e gata de ridicare.',
-    orderId: order.id,
+    orderId: order._id,
   });
 
   const stillValid = [];
-  for (const sub of order.subscriptions) {
+  for (const sub of order.subscriptions || []) {
     try {
       await webpush.sendNotification(sub, payload);
       stillValid.push(sub);
@@ -91,7 +108,7 @@ async function notifyOrderReady(order) {
       }
     }
   }
-  order.subscriptions = stillValid;
+  await ordersCollection.updateOne({ _id: order._id }, { $set: { subscriptions: stillValid } });
 }
 
 // ---------------------------------------------------------
@@ -101,78 +118,130 @@ app.get('/api/vapid-public-key', (req, res) => {
   res.json({ publicKey: VAPID_PUBLIC_KEY });
 });
 
-app.post('/api/orders', (req, res) => {
-  const id = crypto.randomUUID();
-  const number = Math.floor(Math.random() * 900) + 100; // 100-999
-  const order = {
-    id,
-    number,
-    status: 'pending',
-    createdAt: Date.now(),
-    readyAt: null,
-    subscriptions: [],
-  };
-  orders.set(id, order);
-  res.status(201).json(publicOrder(order));
+app.post('/api/orders', async (req, res) => {
+  try {
+    const order = {
+      _id: crypto.randomUUID(),
+      number: Math.floor(Math.random() * 900) + 100, // 100-999
+      status: 'pending',
+      createdAt: Date.now(),
+      readyAt: null,
+      subscriptions: [],
+    };
+    await ordersCollection.insertOne(order);
+    res.status(201).json(publicOrder(order));
+  } catch (err) {
+    console.error('Eroare la creare comanda:', err);
+    res.status(500).json({ error: 'eroare_server' });
+  }
 });
 
-app.get('/api/orders', (req, res) => {
-  const list = Array.from(orders.values())
-    .filter(o => o.status !== 'done')
-    .sort((a, b) => a.createdAt - b.createdAt)
-    .map(publicOrder);
-  res.json(list);
+app.get('/api/orders', async (req, res) => {
+  try {
+    const list = await ordersCollection
+      .find({ status: { $ne: 'done' } })
+      .sort({ createdAt: 1 })
+      .toArray();
+    res.json(list.map(publicOrder));
+  } catch (err) {
+    console.error('Eroare la listare comenzi:', err);
+    res.status(500).json({ error: 'eroare_server' });
+  }
 });
 
-app.get('/api/orders/by-number/:number', (req, res) => {
-  const num = parseInt(req.params.number, 10);
-  if (Number.isNaN(num)) return res.status(400).json({ error: 'numar invalid' });
+app.get('/api/orders/by-number/:number', async (req, res) => {
+  try {
+    const num = parseInt(req.params.number, 10);
+    if (Number.isNaN(num)) return res.status(400).json({ error: 'numar invalid' });
 
-  const matches = Array.from(orders.values()).filter(o => o.number === num);
-  if (matches.length === 0) return res.status(404).json({ error: 'negasita' });
+    const matches = await ordersCollection.find({ number: num }).sort({ createdAt: -1 }).toArray();
+    if (matches.length === 0) return res.status(404).json({ error: 'negasita' });
 
-  matches.sort((a, b) => b.createdAt - a.createdAt);
-  const chosen = matches.find(o => o.status !== 'done') || matches[0];
-  res.json(publicOrder(chosen));
+    const chosen = matches.find(o => o.status !== 'done') || matches[0];
+    res.json(publicOrder(chosen));
+  } catch (err) {
+    console.error('Eroare la cautare comanda:', err);
+    res.status(500).json({ error: 'eroare_server' });
+  }
 });
 
-app.get('/api/orders/:id', (req, res) => {
-  const order = orders.get(req.params.id);
-  if (!order) return res.status(404).json({ error: 'negasita' });
-  res.json(publicOrder(order));
+app.get('/api/orders/:id', async (req, res) => {
+  try {
+    const order = await ordersCollection.findOne({ _id: req.params.id });
+    if (!order) return res.status(404).json({ error: 'negasita' });
+    res.json(publicOrder(order));
+  } catch (err) {
+    console.error('Eroare la citire comanda:', err);
+    res.status(500).json({ error: 'eroare_server' });
+  }
 });
 
 app.post('/api/orders/:id/ready', async (req, res) => {
-  const order = orders.get(req.params.id);
-  if (!order) return res.status(404).json({ error: 'negasita' });
-  order.status = 'ready';
-  order.readyAt = Date.now();
-  res.json(publicOrder(order));
-  // trimitem notificarea dupa ce am raspuns, ca bucataria sa nu astepte
-  notifyOrderReady(order).catch(err => console.error('notifyOrderReady a esuat:', err));
-});
+  try {
+    const order = await ordersCollection.findOne({ _id: req.params.id });
+    if (!order) return res.status(404).json({ error: 'negasita' });
 
-app.post('/api/orders/:id/done', (req, res) => {
-  const order = orders.get(req.params.id);
-  if (!order) return res.status(404).json({ error: 'negasita' });
-  order.status = 'done';
-  order.doneAt = Date.now();
-  res.json(publicOrder(order));
-});
+    const readyAt = Date.now();
+    await ordersCollection.updateOne({ _id: order._id }, { $set: { status: 'ready', readyAt } });
+    res.json(publicOrder({ ...order, status: 'ready', readyAt }));
 
-app.post('/api/orders/:id/subscribe', (req, res) => {
-  const order = orders.get(req.params.id);
-  if (!order) return res.status(404).json({ error: 'negasita' });
-  const subscription = req.body && req.body.subscription;
-  if (!subscription || !subscription.endpoint) {
-    return res.status(400).json({ error: 'abonare invalida' });
+    // trimitem notificarea dupa ce am raspuns, ca bucataria sa nu astepte
+    notifyOrderReady(order).catch(err => console.error('notifyOrderReady a esuat:', err));
+  } catch (err) {
+    console.error('Eroare la marcarea comenzii gata:', err);
+    res.status(500).json({ error: 'eroare_server' });
   }
-  const already = order.subscriptions.some(s => s.endpoint === subscription.endpoint);
-  if (!already) order.subscriptions.push(subscription);
-  res.json({ ok: true });
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log('OrderPing server ruleaza pe portul ' + PORT);
+app.post('/api/orders/:id/done', async (req, res) => {
+  try {
+    const doneAt = Date.now();
+    const result = await ordersCollection.findOneAndUpdate(
+      { _id: req.params.id },
+      { $set: { status: 'done', doneAt } },
+      { returnDocument: 'after' }
+    );
+    if (!result) return res.status(404).json({ error: 'negasita' });
+    res.json(publicOrder(result));
+  } catch (err) {
+    console.error('Eroare la marcarea comenzii ridicata:', err);
+    res.status(500).json({ error: 'eroare_server' });
+  }
 });
+
+app.post('/api/orders/:id/subscribe', async (req, res) => {
+  try {
+    const order = await ordersCollection.findOne({ _id: req.params.id });
+    if (!order) return res.status(404).json({ error: 'negasita' });
+
+    const subscription = req.body && req.body.subscription;
+    if (!subscription || !subscription.endpoint) {
+      return res.status(400).json({ error: 'abonare invalida' });
+    }
+    const already = (order.subscriptions || []).some(s => s.endpoint === subscription.endpoint);
+    if (!already) {
+      await ordersCollection.updateOne({ _id: order._id }, { $push: { subscriptions: subscription } });
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Eroare la abonare:', err);
+    res.status(500).json({ error: 'eroare_server' });
+  }
+});
+
+// ---------------------------------------------------------
+// Pornirea serverului - ne conectam intai la baza de date,
+// abia apoi incepem sa raspundem la cereri.
+const PORT = process.env.PORT || 3000;
+
+connectToDatabase()
+  .then(() => {
+    setInterval(pruneOldOrders, 10 * 60 * 1000);
+    app.listen(PORT, () => {
+      console.log('OrderPing server ruleaza pe portul ' + PORT);
+    });
+  })
+  .catch(err => {
+    console.error('Nu m-am putut conecta la baza de date:', err);
+    process.exit(1);
+  });
