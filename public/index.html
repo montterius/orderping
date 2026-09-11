@@ -75,6 +75,9 @@
   .status-pending{background:rgba(242,163,60,.15);color:var(--bell);}
   .status-ready{background:rgba(43,182,115,.16);color:var(--ready);}
   .ticket-hint{font-size:.78rem;color:var(--ink-soft);margin-bottom:12px;}
+  .ticket-qr-row{display:flex;align-items:center;gap:12px;margin-bottom:12px;}
+  .ticket-qr-row img{width:64px;height:64px;border-radius:6px;flex:none;background:#fff;padding:3px;}
+  .ticket-qr-row .ticket-hint{margin-bottom:0;}
   .btn{border:none;border-radius:9px;padding:10px 14px;font-size:.85rem;font-weight:700;font-family:var(--font-body);}
   .btn-ready{background:var(--ready);color:#04170d;}
   .btn-ready:hover{background:#3fd18a;}
@@ -247,6 +250,19 @@
   function goToRole(role){ safeSet(ROLE_KEY, role); render(); }
   function resetRole(){ safeRemove(ROLE_KEY); safeRemove(LAST_ORDER_KEY); location.reload(); }
 
+  // Daca pagina a fost deschisa prin scanarea unui cod QR (adresa contine
+  // "?order=..."), il trecem direct pe client, fara sa mai aleaga rolul
+  // sau sa introduca manual vreun cod - QR-ul face treaba asta pentru el.
+  (function checkQrOrderParam(){
+    var params = new URLSearchParams(location.search);
+    var orderIdFromQr = params.get('order');
+    if(orderIdFromQr){
+      safeSet(ROLE_KEY, 'client');
+      safeSet(LAST_ORDER_KEY, orderIdFromQr);
+      history.replaceState(null, '', location.pathname);
+    }
+  })();
+
   document.getElementById('pick-kitchen').addEventListener('click', function(){ goToRole('kitchen'); });
   document.getElementById('pick-client').addEventListener('click', function(){ goToRole('client'); });
   document.getElementById('switch-from-kitchen').addEventListener('click', resetRole);
@@ -291,7 +307,10 @@
           '<div class="ticket-time" data-created="'+o.createdAt+'">'+fmtElapsed(o.createdAt)+'</div>'+
         '</div>'+
         '<div class="ticket-status pill '+(isReady?'status-ready':'status-pending')+'">'+(isReady?'● gata':'● se pregătește')+'</div>'+
-        '<div class="ticket-hint">Spune-i clientului numărul <b>#'+o.number+'</b>.</div>'+
+        '<div class="ticket-qr-row">'+
+          '<img src="/api/orders/'+o.id+'/qrcode.png" alt="Cod QR comanda" width="64" height="64">'+
+          '<div class="ticket-hint">Clientul scanează codul, sau îi spui numărul <b>#'+o.number+'</b>.</div>'+
+        '</div>'+
         '<div class="ticket-actions">'+
           (isReady
             ? '<button class="btn btn-done" data-action="done">Ridicată de client</button>'
