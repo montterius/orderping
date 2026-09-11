@@ -29,17 +29,21 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // ---------------------------------------------------------
 // Cheile VAPID identifica site-ul tau fata de serviciile de
-// notificari (Google/Mozilla/Apple). Sunt generate o singura data.
-// TODO pentru mai tarziu: muta-le in variabile de mediu (Environment
-// Variables) din panoul Render, in loc sa stea direct in cod.
-const VAPID_PUBLIC_KEY = 'BPCiNh34_u2lJWchRdzlUe0pKzh6uAjPLtqLj0t_NfufdaSbs-6Hf85KrkS1pepJpafGPgKeB5sjMtYTqPaeR_g';
-const VAPID_PRIVATE_KEY = 'v5sss1G-24k6DtCC69BWCyuzOzTbPiuw4ktTBpvCams';
+// notificari (Google/Mozilla/Apple). Vin din variabile de mediu
+// (Environment Variables) setate pe Render - NU mai sunt scrise
+// direct in cod, ca sa nu fie vizibile pe GitHub.
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY;
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
 
-webpush.setVapidDetails(
-  'mailto:montterius@gmail.com',
-  VAPID_PUBLIC_KEY,
-  VAPID_PRIVATE_KEY
-);
+if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
+  console.error('LIPSESC variabilele de mediu VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY. Seteaza-le in Render, in sectiunea "Environment".');
+} else {
+  webpush.setVapidDetails(
+    'mailto:montterius@gmail.com',
+    VAPID_PUBLIC_KEY,
+    VAPID_PRIVATE_KEY
+  );
+}
 
 // ---------------------------------------------------------
 // Conectarea la baza de date (MongoDB Atlas).
