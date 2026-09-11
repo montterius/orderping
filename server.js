@@ -11,6 +11,7 @@
 //      POST /api/orders/:id/done       -> marcheaza "ridicata"
 //      POST /api/orders/:id/subscribe  -> telefonul clientului se "aboneaza" la notificari
 //      GET  /api/vapid-public-key      -> cheia publica necesara pt notificari push
+//      GET  /api/orders/:id/qrcode.png -> imaginea cu codul QR al comenzii (scanabil)
 //
 // NOTA: comenzile se tin acum in MongoDB (baza de date persistenta), nu mai
 // in memorie - asa ca nu se pierd cand serverul reporneste/adoarme.
@@ -20,6 +21,7 @@ const webpush = require('web-push');
 const crypto = require('crypto');
 const path = require('path');
 const { MongoClient } = require('mongodb');
+const QRCode = require('qrcode');
 
 const app = express();
 app.use(express.json());
@@ -206,6 +208,26 @@ app.post('/api/orders/:id/done', async (req, res) => {
   } catch (err) {
     console.error('Eroare la marcarea comenzii ridicata:', err);
     res.status(500).json({ error: 'eroare_server' });
+  }
+});
+
+// Genereaza "din mers" imaginea codului QR pentru o comanda. Codul QR
+// contine adresa site-ului + numarul comenzii (?order=...), deci atunci
+// cand clientul il scaneaza cu telefonul, e dus direct la ecranul de
+// urmarire a comenzii lui, fara sa mai introduca manual niciun cod.
+app.get('/api/orders/:id/qrcode.png', async (req, res) => {
+  try {
+    const order = await ordersCollection.findOne({ _id: req.params.id });
+    if (!order) return res.status(404).end();
+
+    const baseUrl = req.protocol + '://' + req.get('host');
+    const trackingUrl = baseUrl + '/?order=' + order._id;
+
+    res.set('Content-Type', 'image/png');
+    await QRCode.toFileStream(res, trackingUrl, { width: 240, margin: 1 });
+  } catch (err) {
+    console.error('Eroare la generare cod QR:', err);
+    res.status(500).end();
   }
 });
 
