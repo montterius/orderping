@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OrderPing — Administrare</title>
+<style>
+  :root{
+    --ink:#1b1f24; --ink-soft:#6b7280; --bell:#f2a33c;
+    --ready:#2bb673; --danger:#e5484d;
+    --surface-dark:#262b31; --surface-dark-2:#30363d;
+    --font:'Manrope',system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:var(--font);background:var(--ink);color:#eef1ec;min-height:100vh;padding:24px 16px 60px;}
+  [hidden]{display:none!important;}
+  h1{font-size:1.3rem;margin:0 0 4px;}
+  .sub{color:var(--ink-soft);font-size:.88rem;margin-bottom:24px;}
+  .card{max-width:520px;margin:0 auto;background:var(--surface-dark);border:1px solid #343b42;border-radius:14px;padding:22px;margin-bottom:20px;}
+  label{display:block;font-size:.8rem;color:var(--ink-soft);margin-bottom:6px;margin-top:14px;}
+  label:first-child{margin-top:0;}
+  input{width:100%;padding:11px 12px;border-radius:9px;border:1px solid #454c55;background:#1e2227;color:#eef1ec;font-size:.95rem;}
+  input:focus{outline:none;border-color:var(--bell);}
+  button{cursor:pointer;font-family:inherit;border:none;border-radius:9px;padding:11px 16px;font-weight:700;font-size:.9rem;}
+  .btn-main{background:var(--bell);color:#231404;width:100%;margin-top:18px;}
+  .btn-main:hover{background:#ffb75a;}
+  .btn-small{background:var(--surface-dark-2);color:#eef1ec;border:1px solid #454c55;font-size:.8rem;padding:7px 12px;}
+  .btn-small.deactivate{color:var(--danger);}
+  .btn-small.activate{color:var(--ready);}
+  .msg{font-size:.85rem;margin-top:12px;line-height:1.4;}
+  .msg.error{color:var(--danger);}
+  .msg.ok{color:var(--ready);}
+  table{width:100%;border-collapse:collapse;font-size:.88rem;}
+  th,td{text-align:left;padding:10px 8px;border-bottom:1px solid #343b42;}
+  th{color:var(--ink-soft);font-weight:600;font-size:.76rem;text-transform:uppercase;letter-spacing:.04em;}
+  .status-dot{display:inline-flex;align-items:center;gap:6px;font-size:.82rem;}
+  .status-dot::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--ready);}
+  .status-dot.off::before{background:var(--danger);}
+  .empty{color:var(--ink-soft);font-size:.85rem;padding:12px 0;}
+</style>
+</head>
+<body>
+
+<div style="max-width:520px;margin:0 auto 8px;">
+  <h1>🔐 OrderPing — Administrare</h1>
+  <p class="sub">Aici gestionezi conturile restaurantelor: le adaugi, sau le dezactivezi dacă nu mai vor colaborarea.</p>
+</div>
+
+<section id="gate" class="card">
+  <label for="admin-key-input">Cheia de administrare</label>
+  <input type="password" id="admin-key-input" placeholder="Cheia ta secretă (ADMIN_KEY)">
+  <button class="btn-main" id="btn-enter">Intră</button>
+  <p class="msg error" id="gate-error" hidden></p>
+</section>
+
+<section id="panel" hidden>
+
+  <div class="card">
+    <h1 style="font-size:1.05rem;">Adaugă restaurant nou</h1>
+    <label for="new-name">Numele restaurantului</label>
+    <input type="text" id="new-name" placeholder="ex: Fast Food Central">
+    <label for="new-username">Utilizator (pentru login bucătărie)</label>
+    <input type="text" id="new-username" placeholder="ex: centralfastfood">
+    <label for="new-password">Parolă</label>
+    <input type="text" id="new-password" placeholder="alege o parolă">
+    <button class="btn-main" id="btn-create">+ Creează cont</button>
+    <p class="msg" id="create-msg" hidden></p>
+  </div>
+
+  <div class="card">
+    <h1 style="font-size:1.05rem;margin-bottom:14px;">Restaurante</h1>
+    <table id="rest-table">
+      <thead><tr><th>Nume</th><th>Utilizator</th><th>Stare</th><th></th></tr></thead>
+      <tbody id="rest-tbody"></tbody>
+    </table>
+    <p class="empty" id="rest-empty" hidden>Niciun restaurant încă.</p>
+  </div>
+
+</section>
+
+<script>
+(function(){
+  "use strict";
+  var KEY_STORAGE = 'orderping_admin_key';
+
+  function safeGet(k){ try{ return sessionStorage.getItem(k); }catch(e){ return null; } }
+  function safeSet(k,v){ try{ sessionStorage.setItem(k,v); }catch(e){} }
+
+  var gate = document.getElementById('gate');
+  var panel = document.getElementById('panel');
+  var gateError = document.getElementById('gate-error');
+
+  function adminFetch(path, opts){
+    opts = opts || {};
+    opts.headers = Object.assign({}, opts.headers, { 'x-admin-key': safeGet(KEY_STORAGE) || '' });
+    return fetch(path, opts).then(function(r){
+      return r.json().then(function(data){
+        if(!r.ok) throw Object.assign(new Error('http_error'), {status:r.status, data:data});
+        return data;
+      });
+    });
+  }
+
+  function showPanel(){
+    gate.hidden = true;
+    panel.hidden = false;
+    loadRestaurants();
+  }
+
+  document.getElementById('btn-enter').addEventListener('click', function(){
+    var key = document.getElementById('admin-key-input').value.trim();
+    if(!key){ return; }
+    safeSet(KEY_STORAGE, key);
+    gateError.hidden = true;
+    adminFetch('/api/admin/restaurants').then(function(){
+      showPanel();
+    }).catch(function(){
+      gateError.hidden = false;
+      gateError.textContent = 'Cheie greșită. Verifică valoarea ADMIN_KEY de pe Render.';
+    });
+  });
+
+  function renderRestaurants(list){
+    var tbody = document.getElementById('rest-tbody');
+    var empty = document.getElementById('rest-empty');
+    tbody.innerHTML = '';
+    if(list.length === 0){ empty.hidden = false; return; }
+    empty.hidden = true;
+    list.forEach(function(r){
+      var tr = document.createElement('tr');
+      var active = r.active !== false;
+      tr.innerHTML =
+        '<td>'+r.name+'</td>'+
+        '<td>'+r.username+'</td>'+
+        '<td><span class="status-dot'+(active?'':' off')+'">'+(active?'Activ':'Dezactivat')+'</span></td>'+
+        '<td><button class="btn-small '+(active?'deactivate':'activate')+'" data-id="'+r.id+'">'+(active?'Dezactivează':'Activează')+'</button></td>';
+      var btn = tr.querySelector('button');
+      btn.addEventListener('click', function(){
+        btn.disabled = true;
+        adminFetch('/api/admin/restaurants/'+r.id+'/toggle', {method:'POST'}).then(function(){
+          loadRestaurants();
+        }).catch(function(){ btn.disabled = false; });
+      });
+      tbody.appendChild(tr);
+    });
+  }
+
+  function loadRestaurants(){
+    adminFetch('/api/admin/restaurants').then(renderRestaurants).catch(function(){});
+  }
+
+  document.getElementById('btn-create').addEventListener('click', function(){
+    var name = document.getElementById('new-name').value.trim();
+    var username = document.getElementById('new-username').value.trim();
+    var password = document.getElementById('new-password').value;
+    var msg = document.getElementById('create-msg');
+    msg.hidden = true;
+
+    if(!name || !username || !password){
+      msg.hidden = false; msg.className = 'msg error';
+      msg.textContent = 'Completează toate câmpurile.';
+      return;
+    }
+
+    adminFetch('/api/admin/restaurants', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({name:name, username:username, password:password})
+    }).then(function(){
+      msg.hidden = false; msg.className = 'msg ok';
+      msg.textContent = 'Cont creat cu succes pentru "'+name+'".';
+      document.getElementById('new-name').value = '';
+      document.getElementById('new-username').value = '';
+      document.getElementById('new-password').value = '';
+      loadRestaurants();
+    }).catch(function(err){
+      msg.hidden = false; msg.className = 'msg error';
+      msg.textContent = (err.data && err.data.error === 'user_existent')
+        ? 'Există deja un cont cu acest utilizator.'
+        : 'Nu am putut crea contul. Încearcă din nou.';
+    });
+  });
+
+  // Daca aveam deja cheia salvata din vizita anterioara, intram direct.
+  if(safeGet(KEY_STORAGE)){
+    adminFetch('/api/admin/restaurants').then(showPanel).catch(function(){});
+  }
+})();
+</script>
+</body>
+</html>
