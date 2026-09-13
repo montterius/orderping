@@ -428,4 +428,268 @@
     function startKitchenApp(name){
       document.getElementById('kitchen-login').hidden = true;
       document.getElementById('kitchen-app').hidden = false;
-      if(name) document.getElementById('k-restaurant-name')
+      if(name) document.getElementById('k-restaurant-name').textContent = name;
+      refresh();
+      if(kitchenRefreshTimer) clearInterval(kitchenRefreshTimer);
+      kitchenRefreshTimer = setInterval(refresh, 2000);
+    }
+
+    // ---- Login ----
+    var kUsername = document.getElementById('k-username');
+    var kPassword = document.getElementById('k-password');
+    var kLoginError = document.getElementById('k-login-error');
+
+    function doKitchenLogin(){
+      var username = kUsername.value.trim();
+      var password = kPassword.value;
+      kLoginError.hidden = true;
+      if(!username || !password){
+        kLoginError.hidden = false; kLoginError.textContent = 'Completează utilizatorul și parola.';
+        return;
+      }
+      api('/api/login', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({username:username, password:password})
+      }).then(function(res){
+        safeSet(K_TOKEN_KEY, res.token);
+        safeSet(K_NAME_KEY, res.name);
+        kPassword.value = '';
+        startKitchenApp(res.name);
+      }).catch(function(err){
+        kLoginError.hidden = false;
+        kLoginError.textContent = (err.status === 401)
+          ? 'Utilizator/parolă greșite, sau contul a fost dezactivat.'
+          : 'A apărut o eroare. Încearcă din nou.';
+      });
+    }
+
+    document.getElementById('btn-k-login').addEventListener('click', doKitchenLogin);
+    kPassword.addEventListener('keydown', function(e){ if(e.key === 'Enter') doKitchenLogin(); });
+
+    document.getElementById('btn-k-logout').addEventListener('click', function(){
+      kitchenLogout(null);
+    });
+
+    // Daca exista deja un login valabil (salvat dintr-o vizita anterioara),
+    // intram direct in panou, fara sa mai cerem din nou user/parola.
+    var savedToken = safeGet(K_TOKEN_KEY);
+    if(savedToken){
+      startKitchenApp(safeGet(K_NAME_KEY));
+    }
+  }
+
+  // ================= CLIENT =================
+  function urlBase64ToUint8Array(base64String){
+    var padding = '='.repeat((4 - base64String.length % 4) % 4);
+    var base64 = (base64String + padding).replace(/-/g,'+').replace(/_/g,'/');
+    var rawData = atob(base64);
+    var outputArray = new Uint8Array(rawData.length);
+    for (var i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
+    return outputArray;
+  }
+
+  function initClient(){
+    var elLookup = document.getElementById('client-lookup');
+    var elTracking = document.getElementById('client-tracking');
+    var elInput = document.getElementById('order-code-input');
+    var elError = document.getElementById('lookup-error');
+    var elNumberVal = document.getElementById('r-number-val');
+    var elStart = document.getElementById('r-start-screen');
+    var elWaiting = document.getElementById('r-waiting-screen');
+    var elWaitingSub = document.getElementById('r-waiting-sub');
+    var elReady = document.getElementById('r-ready-screen');
+    var elDone = document.getElementById('r-done-screen');
+    var elLimits = document.getElementById('r-limits-note');
+    var elIosMoreBtn = document.getElementById('btn-ios-more-info');
+    var elIosDetail = document.getElementById('r-ios-detail');
+    var card = document.getElementById('receipt-card');
+
+    elIosMoreBtn.addEventListener('click', function(){
+      elIosDetail.hidden = false;
+      elIosDetail.textContent = 'Pe iPhone: ca să primești alerta chiar și cu ecranul blocat, adaugă acest site pe ecranul principal (butonul Distribuie ⬆️ → „Adaugă pe ecranul principal") și deschide-l de acolo, ca pe o aplicație.';
+      elIosMoreBtn.hidden = true;
+    });
+
+    var audioCtx = null;
+    var hasStarted = false;
+    var lastStatus = null;
+    var pollTimer = null;
+    var currentOrderId = null;
+    var pushEnabled = false;
+
+    function beep(){
+      try{
+        audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+        var playTones = function(){
+          var now = audioCtx.currentTime;
+          [[880,now],[1175,now+0.18]].forEach(function(pair){
+            var osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+            osc.type = 'sine'; osc.frequency.value = pair[0];
+            gain.gain.setValueAtTime(0.0001, pair[1]);
+            gain.gain.exponentialRampToValueAtTime(0.35, pair[1]+0.02);
+            gain.gain.exponentialRampToValueAtTime(0.0001, pair[1]+0.3);
+            osc.connect(gain).connect(audioCtx.destination);
+            osc.start(pair[1]); osc.stop(pair[1]+0.32);
+          });
+        };
+        // iOS/Safari suspenda deseori AudioContext; il "trezim" inainte de a canta tonul
+        if(audioCtx.state === 'suspended'){
+          audioCtx.resume().then(playTones).catch(function(){});
+        } else {
+          playTones();
+        }
+      }catch(e){}
+    }
+
+    function notifyForeground(){
+      beep();
+      if(navigator.vibrate){ navigator.vibrate([250,120,250,120,500]); }
+      var original = document.title, flashes = 0;
+      var t = setInterval(function(){
+        document.title = (document.title === original) ? '🔔 GATA! comanda ta' : original;
+        flashes++; if(flashes > 8){ clearInterval(t); document.title = original; }
+      }, 900);
+    }
+
+    function enablePush(orderId){
+      if(!('serviceWorker' in navigator) || !('PushManager' in window)){
+        return Promise.resolve({ok:false, reason:'unsupported'});
+      }
+      return navigator.serviceWorker.register('/sw.js').then(function(){
+        return navigator.serviceWorker.ready;
+      }).then(function(reg){
+        return Notification.requestPermission().then(function(perm){
+          if(perm !== 'granted') return {ok:false, reason:'denied'};
+          return fetch('/api/vapid-public-key').then(function(r){ return r.json(); }).then(function(data){
+            return reg.pushManager.subscribe({
+              userVisibleOnly: true,
+              applicationServerKey: urlBase64ToUint8Array(data.publicKey)
+            });
+          }).then(function(sub){
+            return fetch('/api/orders/'+orderId+'/subscribe', {
+              method:'POST', headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({subscription: sub.toJSON()})
+            });
+          }).then(function(){ return {ok:true}; });
+        });
+      }).catch(function(err){ return {ok:false, reason:'error', err:err}; });
+    }
+
+    var isIOS = /iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    var isStandalone = (window.navigator.standalone === true) || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+
+    document.getElementById('btn-start-waiting').addEventListener('click', function(){
+      hasStarted = true;
+      try{
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if(audioCtx.state === 'suspended'){ audioCtx.resume(); }
+        // "incalzim" un sunet mut, ca sa deblocam definitiv sunetul pe iPhone/Safari
+        var warm = audioCtx.createOscillator();
+        var warmGain = audioCtx.createGain();
+        warmGain.gain.value = 0;
+        warm.connect(warmGain).connect(audioCtx.destination);
+        warm.start(); warm.stop(audioCtx.currentTime + 0.01);
+      }catch(e){}
+      elStart.hidden = true;
+
+      if(lastStatus === 'ready') elReady.hidden = false;
+      else if(lastStatus === 'done') elDone.hidden = false;
+      else elWaiting.hidden = false;
+
+      enablePush(currentOrderId).then(function(res){
+        if(res.ok){
+          pushEnabled = true;
+          elWaitingSub.textContent = 'Poți bloca ecranul sau închide telefonul în buzunar — te anunțăm automat.';
+        } else if(res.reason === 'denied'){
+          elWaitingSub.textContent = 'Nu ai permis notificările — ține pagina deschisă și cu ecranul pornit ca să auzi alerta.';
+        } else if(isIOS && !isStandalone){
+          elWaitingSub.textContent = 'Ține un ochi pe telefon — te anunțăm aici, cu sunet, când e gata comanda ta.';
+          elIosMoreBtn.hidden = false;
+        } else {
+          elWaitingSub.textContent = 'Notificarea în fundal nu e susținută de acest telefon/browser — ține pagina deschisă ca să auzi alerta.';
+        }
+        if(!navigator.vibrate){ elLimits.hidden = false; elLimits.textContent = 'Notă: pe iPhone, vibrația nu e susținută (limitare Apple) — dar sunetul va funcționa cât timp ții pagina deschisă și ecranul pornit.'; }
+      });
+    });
+
+    function applyStatus(o){
+      var changed = (lastStatus !== null && lastStatus !== o.status);
+      lastStatus = o.status;
+      elNumberVal.textContent = o.number;
+      if(!hasStarted) return;
+
+      elWaiting.hidden = o.status !== 'pending';
+      elReady.hidden = o.status !== 'ready';
+      elDone.hidden = o.status !== 'done';
+      card.classList.toggle('state-ready', o.status === 'ready');
+
+      if(changed && o.status === 'ready'){
+        document.getElementById('r-ready-badge').classList.add('pulse');
+        notifyForeground();
+      }
+    }
+
+    function startTracking(orderId){
+      if(pollTimer){ clearInterval(pollTimer); pollTimer = null; }
+      currentOrderId = orderId;
+      hasStarted = false; lastStatus = null;
+      elStart.hidden = false; elWaiting.hidden = true; elReady.hidden = true; elDone.hidden = true; elLimits.hidden = true;
+      elIosMoreBtn.hidden = true; elIosDetail.hidden = true;
+      card.classList.remove('state-ready');
+
+      function poll(){
+        api('/api/orders/'+orderId).then(function(o){
+          safeSet(LAST_ORDER_KEY, orderId);
+          elLookup.hidden = true; elTracking.hidden = false;
+          applyStatus(o);
+        }).catch(function(err){
+          if(err.status === 404){
+            safeRemove(LAST_ORDER_KEY);
+            clearInterval(pollTimer); pollTimer = null;
+            elTracking.hidden = true; elLookup.hidden = false;
+            elError.hidden = false;
+            elError.textContent = 'Comanda nu mai există. Verifică numărul.';
+          }
+        });
+      }
+      poll();
+      pollTimer = setInterval(poll, 2000);
+    }
+
+    function doLookup(){
+      var raw = elInput.value.trim();
+      var num = parseInt(raw, 10);
+      elError.hidden = true;
+      if(!raw || isNaN(num)){
+        elError.hidden = false; elError.textContent = 'Introdu un număr valid (cel de pe bon).';
+        return;
+      }
+      api('/api/orders/by-number/'+num).then(function(o){
+        startTracking(o.id);
+      }).catch(function(err){
+        elError.hidden = false;
+        elError.textContent = (err.status === 404)
+          ? ('Nu am găsit nicio comandă cu numărul #'+num+'. Verifică din nou pe bon.')
+          : 'A apărut o eroare la căutare. Încearcă din nou.';
+      });
+    }
+
+    document.getElementById('btn-track').addEventListener('click', doLookup);
+    elInput.addEventListener('keydown', function(e){ if(e.key === 'Enter') doLookup(); });
+
+    document.getElementById('btn-find-other').addEventListener('click', function(){
+      if(pollTimer){ clearInterval(pollTimer); pollTimer = null; }
+      safeRemove(LAST_ORDER_KEY);
+      elTracking.hidden = true; elLookup.hidden = false;
+      elInput.value = ''; elError.hidden = true; elInput.focus();
+    });
+
+    var lastOrderId = safeGet(LAST_ORDER_KEY);
+    if(lastOrderId) startTracking(lastOrderId);
+  }
+
+  render();
+})();
+</script>
+</body>
+</html>
