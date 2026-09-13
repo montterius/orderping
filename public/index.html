@@ -134,6 +134,11 @@
   .find-other{display:block;margin-top:18px;background:none;border:none;color:var(--ink-soft);font-size:.82rem;text-decoration:underline;}
   .find-other:hover{color:var(--bell-dim);}
   @media (prefers-reduced-motion: reduce){.r-dots span,.r-ready-badge,.r-ready-badge.pulse{animation:none!important;}}
+
+  /* IN-APP BROWSER NOTICE */
+  .inapp-note{width:100%;max-width:380px;background:#fff8ea;border:1px solid #f2d9a3;color:#6b4a12;border-radius:10px;padding:14px 16px;margin-bottom:16px;font-size:.85rem;line-height:1.5;text-align:left;}
+  .inapp-note b{font-weight:800;}
+  .inapp-dismiss{display:block;margin-top:10px;background:none;border:none;color:#6b4a12;font-size:.78rem;text-decoration:underline;padding:0;}
 </style>
 </head>
 <body>
@@ -192,6 +197,10 @@
 </section>
 
 <section id="client-view" hidden>
+  <div class="inapp-note" id="inapp-note" hidden>
+    📱 Se pare că această pagină e deschisă în interiorul altei aplicații (nu în Safari) — sunetul de notificare s-ar putea să nu funcționeze corect aici. Pentru cel mai sigur rezultat, apasă meniul (de obicei ⋯ sau ⋮, în colț) și alege <b>„Deschide în Safari"</b>.
+    <button class="inapp-dismiss" id="inapp-dismiss">Am înțeles, continuă aici</button>
+  </div>
   <div class="receipt" id="receipt-card">
     <div class="r-brand">🔔 OrderPing</div>
 
@@ -504,6 +513,23 @@
     var elIosDetail = document.getElementById('r-ios-detail');
     var card = document.getElementById('receipt-card');
 
+    // Unele aplicatii (scannere de cod QR, retele sociale, etc.) deschid
+    // link-urile intr-un "browser" propriu, mai limitat decat Safari real -
+    // acolo sunetul de notificare poate sa nu functioneze corect. Detectam
+    // cateva semnaturi cunoscute si aratam un mesaj clar, cu solutia.
+    var INAPP_DISMISSED_KEY = 'orderping_inapp_dismissed';
+    (function checkInAppBrowser(){
+      var ua = navigator.userAgent || '';
+      var looksLikeInApp = /FBAN|FBAV|FB_IAB|Instagram|Line\/|MicroMessenger|TikTok|musical_ly|Twitter|Snapchat|GSA\//i.test(ua);
+      if(looksLikeInApp && !safeGet(INAPP_DISMISSED_KEY)){
+        document.getElementById('inapp-note').hidden = false;
+      }
+    })();
+    document.getElementById('inapp-dismiss').addEventListener('click', function(){
+      safeSet(INAPP_DISMISSED_KEY, '1');
+      document.getElementById('inapp-note').hidden = true;
+    });
+
     elIosMoreBtn.addEventListener('click', function(){
       elIosDetail.hidden = false;
       elIosDetail.textContent = 'Pe iPhone: ca să primești alerta chiar și cu ecranul blocat, adaugă acest site pe ecranul principal (butonul Distribuie ⬆️ → „Adaugă pe ecranul principal") și deschide-l de acolo, ca pe o aplicație.';
@@ -603,10 +629,10 @@
         } else if(res.reason === 'denied'){
           elWaitingSub.textContent = 'Nu ai permis notificările — ține pagina deschisă și cu ecranul pornit ca să auzi alerta.';
         } else if(isIOS && !isStandalone){
-          elWaitingSub.textContent = 'Ține un ochi pe telefon — te anunțăm aici, cu sunet, când e gata comanda ta.';
+          elWaitingSub.textContent = 'Te rugăm să nu blochezi telefonul și să ții pagina deschisă pe ecran — comanda ta poate fi gata în orice clipă, iar noi te anunțăm chiar aici, cu sunet.';
           elIosMoreBtn.hidden = false;
         } else {
-          elWaitingSub.textContent = 'Notificarea în fundal nu e susținută de acest telefon/browser — ține pagina deschisă ca să auzi alerta.';
+          elWaitingSub.textContent = 'Notificarea în fundal nu e susținută de acest telefon/browser — te rugăm să nu blochezi telefonul și să ții pagina deschisă, ca să auzi alerta când comanda e gata.';
         }
         if(!navigator.vibrate){ elLimits.hidden = false; elLimits.textContent = 'Notă: pe iPhone, vibrația nu e susținută (limitare Apple) — dar sunetul va funcționa cât timp ții pagina deschisă și ecranul pornit.'; }
       });
