@@ -87,6 +87,16 @@
   .role-switch{display:block;margin:26px auto 0;text-align:center;background:none;border:none;color:var(--ink-soft);font-size:.78rem;text-decoration:underline;}
   .role-switch:hover{color:var(--bell);}
 
+  /* KITCHEN LOGIN */
+  .klogin{max-width:360px;margin:40px auto 0;text-align:center;}
+  .klogin .bell-big{font-size:2.2rem;display:block;margin-bottom:6px;}
+  .klogin h2{color:#fff;font-size:1.25rem;margin-bottom:6px;}
+  .klogin .sub{color:var(--ink-soft);font-size:.85rem;margin-bottom:24px;line-height:1.5;}
+  .klogin label{display:block;text-align:left;font-size:.78rem;color:var(--ink-soft);margin:0 0 6px;}
+  .klogin input{width:100%;padding:12px 14px;border-radius:9px;border:1px solid #454c55;background:var(--surface-dark);color:var(--paper);font-size:.95rem;margin-bottom:14px;}
+  .klogin input:focus{outline:none;border-color:var(--bell);}
+  .klogin-name{font-size:.82rem;color:var(--ink-soft);}
+
   .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);background:#fff;color:var(--ink);padding:10px 18px;border-radius:10px;font-size:.85rem;font-weight:600;opacity:0;transition:opacity .25s ease,transform .25s ease;pointer-events:none;box-shadow:0 10px 30px -8px rgba(0,0,0,.4);max-width:80vw;text-align:center;}
   .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 
@@ -146,22 +156,39 @@
 </section>
 
 <section id="kitchen-view" hidden>
-  <div class="k-header">
-    <div class="k-brand">
-      <span class="bell">🔔</span>
-      <div><h1>OrderPing &middot; Panou Bucătărie</h1><div class="sub">Aici bucătăria marchează comenzile ca fiind gata</div></div>
+
+  <div class="klogin" id="kitchen-login">
+    <span class="bell-big">🔒</span>
+    <h2>Login bucătărie</h2>
+    <p class="sub">Introdu datele primite de la OrderPing pentru restaurantul tău.</p>
+    <label for="k-username">Utilizator</label>
+    <input type="text" id="k-username" autocomplete="username">
+    <label for="k-password">Parolă</label>
+    <input type="password" id="k-password" autocomplete="current-password">
+    <button class="btn-track" id="btn-k-login">Intră în panou</button>
+    <p class="lookup-error" id="k-login-error" hidden></p>
+    <button class="role-switch" id="switch-from-kitchen-login">🔄 Schimbă rolul / testează ca și client</button>
+  </div>
+
+  <div id="kitchen-app" hidden>
+    <div class="k-header">
+      <div class="k-brand">
+        <span class="bell">🔔</span>
+        <div><h1>OrderPing &middot; Panou Bucătărie</h1><div class="sub" id="k-restaurant-name">Aici bucătăria marchează comenzile ca fiind gata</div></div>
+      </div>
+      <span class="pill k-pill">LIVE</span>
     </div>
-    <span class="pill k-pill">LIVE</span>
+
+    <button class="k-new" id="btn-new-order">＋ Comandă nouă</button>
+
+    <div class="k-columns">
+      <div class="k-col"><h2>În pregătire <span class="count" id="count-pending">0</span></h2><div id="list-pending"></div></div>
+      <div class="k-col"><h2>Gata de ridicare <span class="count" id="count-ready">0</span></h2><div id="list-ready"></div></div>
+    </div>
+
+    <button class="role-switch" id="btn-k-logout">🔒 Ieși din cont (altă tură / alt restaurant)</button>
+    <button class="role-switch" id="switch-from-kitchen">🔄 Schimbă rolul / testează ca și client</button>
   </div>
-
-  <button class="k-new" id="btn-new-order">＋ Comandă nouă</button>
-
-  <div class="k-columns">
-    <div class="k-col"><h2>În pregătire <span class="count" id="count-pending">0</span></h2><div id="list-pending"></div></div>
-    <div class="k-col"><h2>Gata de ridicare <span class="count" id="count-ready">0</span></h2><div id="list-ready"></div></div>
-  </div>
-
-  <button class="role-switch" id="switch-from-kitchen">🔄 Schimbă rolul / testează ca și client</button>
 </section>
 
 <section id="client-view" hidden>
@@ -219,6 +246,8 @@
 
   var ROLE_KEY = 'orderping_role';
   var LAST_ORDER_KEY = 'orderping_last_order_id';
+  var K_TOKEN_KEY = 'orderping_kitchen_token';
+  var K_NAME_KEY = 'orderping_kitchen_name';
 
   function safeGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
   function safeSet(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
@@ -246,6 +275,31 @@
     });
   }
 
+  // La fel ca api(), dar adauga automat "biletul de login" al bucatariei
+  // (token-ul primit dupa /api/login). Daca serverul spune ca nu mai e
+  // valabil (cont dezactivat sau token expirat), scoate automat din cont.
+  function kitchenApi(path, opts){
+    opts = opts || {};
+    opts.headers = Object.assign({}, opts.headers, { 'Authorization': 'Bearer ' + (safeGet(K_TOKEN_KEY) || '') });
+    return api(path, opts).catch(function(err){
+      if(err && err.status === 401){
+        kitchenLogout('Ai fost deconectat (contul a fost dezactivat sau sesiunea a expirat). Te rugăm să te loghezi din nou.');
+      }
+      throw err;
+    });
+  }
+
+  function kitchenLogout(message){
+    safeRemove(K_TOKEN_KEY);
+    safeRemove(K_NAME_KEY);
+    if(kitchenRefreshTimer){ clearInterval(kitchenRefreshTimer); kitchenRefreshTimer = null; }
+    document.getElementById('kitchen-app').hidden = true;
+    document.getElementById('kitchen-login').hidden = false;
+    var err = document.getElementById('k-login-error');
+    if(message){ err.hidden = false; err.textContent = message; }
+    else { err.hidden = true; }
+  }
+
   // ================= ROLE ROUTING =================
   function goToRole(role){ safeSet(ROLE_KEY, role); render(); }
   function resetRole(){ safeRemove(ROLE_KEY); safeRemove(LAST_ORDER_KEY); location.reload(); }
@@ -266,9 +320,11 @@
   document.getElementById('pick-kitchen').addEventListener('click', function(){ goToRole('kitchen'); });
   document.getElementById('pick-client').addEventListener('click', function(){ goToRole('client'); });
   document.getElementById('switch-from-kitchen').addEventListener('click', resetRole);
+  document.getElementById('switch-from-kitchen-login').addEventListener('click', resetRole);
   document.getElementById('switch-from-client').addEventListener('click', resetRole);
 
   var kitchenStarted = false, clientStarted = false;
+  var kitchenRefreshTimer = null;
 
   function render(){
     var role = safeGet(ROLE_KEY);
@@ -320,20 +376,22 @@
       var readyBtn = wrap.querySelector('[data-action="ready"]');
       if(readyBtn){
         readyBtn.addEventListener('click', function(){
-          api('/api/orders/'+o.id+'/ready', {method:'POST'}).catch(function(){ showToast('Nu am putut actualiza comanda.'); });
+          kitchenApi('/api/orders/'+o.id+'/ready', {method:'POST'}).catch(function(err){
+            if(!err || err.status !== 401) showToast('Nu am putut actualiza comanda.');
+          });
         });
       }
       var doneBtn = wrap.querySelector('[data-action="done"]');
       if(doneBtn){
         doneBtn.addEventListener('click', function(){
-          api('/api/orders/'+o.id+'/done', {method:'POST'}).catch(function(){});
+          kitchenApi('/api/orders/'+o.id+'/done', {method:'POST'}).catch(function(){});
         });
       }
       return wrap;
     }
 
     function refresh(){
-      api('/api/orders').then(function(list){
+      kitchenApi('/api/orders').then(function(list){
         var pending = list.filter(function(o){ return o.status === 'pending'; });
         var ready = list.filter(function(o){ return o.status === 'ready'; }).sort(function(a,b){ return (b.readyAt||0)-(a.readyAt||0); });
 
@@ -347,14 +405,16 @@
         readyList.innerHTML = '';
         if(ready.length === 0) readyList.innerHTML = '<div class="k-empty">Nimic gata încă.</div>';
         else ready.forEach(function(o){ readyList.appendChild(renderTicket(o)); });
-      }).catch(function(){ /* conexiune momentan indisponibila, incercam iar la urmatoarea reimprospatare */ });
+      }).catch(function(){ /* conexiune momentan indisponibila (sau deconectat - tratat separat), incercam iar la urmatoarea reimprospatare */ });
     }
 
     document.getElementById('btn-new-order').addEventListener('click', function(){
-      api('/api/orders', {method:'POST'}).then(function(o){
+      kitchenApi('/api/orders', {method:'POST'}).then(function(o){
         showToast('Comanda #'+o.number+' a fost creată.');
         refresh();
-      }).catch(function(){ showToast('Nu am putut crea comanda.'); });
+      }).catch(function(err){
+        if(!err || err.status !== 401) showToast('Nu am putut crea comanda.');
+      });
     });
 
     setInterval(function(){
@@ -363,222 +423,9 @@
       });
     }, 1000);
 
-    refresh();
-    setInterval(refresh, 2000);
-  }
-
-  // ================= CLIENT =================
-  function urlBase64ToUint8Array(base64String){
-    var padding = '='.repeat((4 - base64String.length % 4) % 4);
-    var base64 = (base64String + padding).replace(/-/g,'+').replace(/_/g,'/');
-    var rawData = atob(base64);
-    var outputArray = new Uint8Array(rawData.length);
-    for (var i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
-    return outputArray;
-  }
-
-  function initClient(){
-    var elLookup = document.getElementById('client-lookup');
-    var elTracking = document.getElementById('client-tracking');
-    var elInput = document.getElementById('order-code-input');
-    var elError = document.getElementById('lookup-error');
-    var elNumberVal = document.getElementById('r-number-val');
-    var elStart = document.getElementById('r-start-screen');
-    var elWaiting = document.getElementById('r-waiting-screen');
-    var elWaitingSub = document.getElementById('r-waiting-sub');
-    var elReady = document.getElementById('r-ready-screen');
-    var elDone = document.getElementById('r-done-screen');
-    var elLimits = document.getElementById('r-limits-note');
-    var elIosMoreBtn = document.getElementById('btn-ios-more-info');
-    var elIosDetail = document.getElementById('r-ios-detail');
-    var card = document.getElementById('receipt-card');
-
-    elIosMoreBtn.addEventListener('click', function(){
-      elIosDetail.hidden = false;
-      elIosDetail.textContent = 'Pe iPhone: ca să primești alerta chiar și cu ecranul blocat, adaugă acest site pe ecranul principal (butonul Distribuie ⬆️ → „Adaugă pe ecranul principal") și deschide-l de acolo, ca pe o aplicație.';
-      elIosMoreBtn.hidden = true;
-    });
-
-    var audioCtx = null;
-    var hasStarted = false;
-    var lastStatus = null;
-    var pollTimer = null;
-    var currentOrderId = null;
-    var pushEnabled = false;
-
-    function beep(){
-      try{
-        audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-        var playTones = function(){
-          var now = audioCtx.currentTime;
-          [[880,now],[1175,now+0.18]].forEach(function(pair){
-            var osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
-            osc.type = 'sine'; osc.frequency.value = pair[0];
-            gain.gain.setValueAtTime(0.0001, pair[1]);
-            gain.gain.exponentialRampToValueAtTime(0.35, pair[1]+0.02);
-            gain.gain.exponentialRampToValueAtTime(0.0001, pair[1]+0.3);
-            osc.connect(gain).connect(audioCtx.destination);
-            osc.start(pair[1]); osc.stop(pair[1]+0.32);
-          });
-        };
-        // iOS/Safari suspenda deseori AudioContext; il "trezim" inainte de a canta tonul
-        if(audioCtx.state === 'suspended'){
-          audioCtx.resume().then(playTones).catch(function(){});
-        } else {
-          playTones();
-        }
-      }catch(e){}
-    }
-
-    function notifyForeground(){
-      beep();
-      if(navigator.vibrate){ navigator.vibrate([250,120,250,120,500]); }
-      var original = document.title, flashes = 0;
-      var t = setInterval(function(){
-        document.title = (document.title === original) ? '🔔 GATA! comanda ta' : original;
-        flashes++; if(flashes > 8){ clearInterval(t); document.title = original; }
-      }, 900);
-    }
-
-    function enablePush(orderId){
-      if(!('serviceWorker' in navigator) || !('PushManager' in window)){
-        return Promise.resolve({ok:false, reason:'unsupported'});
-      }
-      return navigator.serviceWorker.register('/sw.js').then(function(){
-        return navigator.serviceWorker.ready;
-      }).then(function(reg){
-        return Notification.requestPermission().then(function(perm){
-          if(perm !== 'granted') return {ok:false, reason:'denied'};
-          return fetch('/api/vapid-public-key').then(function(r){ return r.json(); }).then(function(data){
-            return reg.pushManager.subscribe({
-              userVisibleOnly: true,
-              applicationServerKey: urlBase64ToUint8Array(data.publicKey)
-            });
-          }).then(function(sub){
-            return fetch('/api/orders/'+orderId+'/subscribe', {
-              method:'POST', headers:{'Content-Type':'application/json'},
-              body: JSON.stringify({subscription: sub.toJSON()})
-            });
-          }).then(function(){ return {ok:true}; });
-        });
-      }).catch(function(err){ return {ok:false, reason:'error', err:err}; });
-    }
-
-    var isIOS = /iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-    var isStandalone = (window.navigator.standalone === true) || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
-
-    document.getElementById('btn-start-waiting').addEventListener('click', function(){
-      hasStarted = true;
-      try{
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        if(audioCtx.state === 'suspended'){ audioCtx.resume(); }
-        // "incalzim" un sunet mut, ca sa deblocam definitiv sunetul pe iPhone/Safari
-        var warm = audioCtx.createOscillator();
-        var warmGain = audioCtx.createGain();
-        warmGain.gain.value = 0;
-        warm.connect(warmGain).connect(audioCtx.destination);
-        warm.start(); warm.stop(audioCtx.currentTime + 0.01);
-      }catch(e){}
-      elStart.hidden = true;
-
-      if(lastStatus === 'ready') elReady.hidden = false;
-      else if(lastStatus === 'done') elDone.hidden = false;
-      else elWaiting.hidden = false;
-
-      enablePush(currentOrderId).then(function(res){
-        if(res.ok){
-          pushEnabled = true;
-          elWaitingSub.textContent = 'Poți bloca ecranul sau închide telefonul în buzunar — te anunțăm automat.';
-        } else if(res.reason === 'denied'){
-          elWaitingSub.textContent = 'Nu ai permis notificările — ține pagina deschisă și cu ecranul pornit ca să auzi alerta.';
-        } else if(isIOS && !isStandalone){
-          elWaitingSub.textContent = 'Ține un ochi pe telefon — te anunțăm aici, cu sunet, când e gata comanda ta.';
-          elIosMoreBtn.hidden = false;
-        } else {
-          elWaitingSub.textContent = 'Notificarea în fundal nu e susținută de acest telefon/browser — ține pagina deschisă ca să auzi alerta.';
-        }
-        if(!navigator.vibrate){ elLimits.hidden = false; elLimits.textContent = 'Notă: pe iPhone, vibrația nu e susținută (limitare Apple) — dar sunetul va funcționa cât timp ții pagina deschisă și ecranul pornit.'; }
-      });
-    });
-
-    function applyStatus(o){
-      var changed = (lastStatus !== null && lastStatus !== o.status);
-      lastStatus = o.status;
-      elNumberVal.textContent = o.number;
-      if(!hasStarted) return;
-
-      elWaiting.hidden = o.status !== 'pending';
-      elReady.hidden = o.status !== 'ready';
-      elDone.hidden = o.status !== 'done';
-      card.classList.toggle('state-ready', o.status === 'ready');
-
-      if(changed && o.status === 'ready'){
-        document.getElementById('r-ready-badge').classList.add('pulse');
-        notifyForeground();
-      }
-    }
-
-    function startTracking(orderId){
-      if(pollTimer){ clearInterval(pollTimer); pollTimer = null; }
-      currentOrderId = orderId;
-      hasStarted = false; lastStatus = null;
-      elStart.hidden = false; elWaiting.hidden = true; elReady.hidden = true; elDone.hidden = true; elLimits.hidden = true;
-      elIosMoreBtn.hidden = true; elIosDetail.hidden = true;
-      card.classList.remove('state-ready');
-
-      function poll(){
-        api('/api/orders/'+orderId).then(function(o){
-          safeSet(LAST_ORDER_KEY, orderId);
-          elLookup.hidden = true; elTracking.hidden = false;
-          applyStatus(o);
-        }).catch(function(err){
-          if(err.status === 404){
-            safeRemove(LAST_ORDER_KEY);
-            clearInterval(pollTimer); pollTimer = null;
-            elTracking.hidden = true; elLookup.hidden = false;
-            elError.hidden = false;
-            elError.textContent = 'Comanda nu mai există. Verifică numărul.';
-          }
-        });
-      }
-      poll();
-      pollTimer = setInterval(poll, 2000);
-    }
-
-    function doLookup(){
-      var raw = elInput.value.trim();
-      var num = parseInt(raw, 10);
-      elError.hidden = true;
-      if(!raw || isNaN(num)){
-        elError.hidden = false; elError.textContent = 'Introdu un număr valid (cel de pe bon).';
-        return;
-      }
-      api('/api/orders/by-number/'+num).then(function(o){
-        startTracking(o.id);
-      }).catch(function(err){
-        elError.hidden = false;
-        elError.textContent = (err.status === 404)
-          ? ('Nu am găsit nicio comandă cu numărul #'+num+'. Verifică din nou pe bon.')
-          : 'A apărut o eroare la căutare. Încearcă din nou.';
-      });
-    }
-
-    document.getElementById('btn-track').addEventListener('click', doLookup);
-    elInput.addEventListener('keydown', function(e){ if(e.key === 'Enter') doLookup(); });
-
-    document.getElementById('btn-find-other').addEventListener('click', function(){
-      if(pollTimer){ clearInterval(pollTimer); pollTimer = null; }
-      safeRemove(LAST_ORDER_KEY);
-      elTracking.hidden = true; elLookup.hidden = false;
-      elInput.value = ''; elError.hidden = true; elInput.focus();
-    });
-
-    var lastOrderId = safeGet(LAST_ORDER_KEY);
-    if(lastOrderId) startTracking(lastOrderId);
-  }
-
-  render();
-})();
-</script>
-</body>
-</html>
+    // Porneste efectiv panoul (dupa ce stim ca e cineva logat) - se apeleaza
+    // fie imediat, daca exista deja un token salvat, fie dupa un login reusit.
+    function startKitchenApp(name){
+      document.getElementById('kitchen-login').hidden = true;
+      document.getElementById('kitchen-app').hidden = false;
+      if(name) document.getElementById('k-restaurant-name')
