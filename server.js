@@ -2,26 +2,33 @@
 // ---------------------------------------------------------
 // Ce face acest fisier:
 //  - tine minte comenzile intr-o baza de date reala (MongoDB), nu se mai pierd
+//  - tine minte restaurantele care au cont (fiecare cu user + parola proprii)
 //  - ofera cateva adrese ("API") pe care pagina web le foloseste:
-//      POST /api/orders                -> creeaza o comanda noua
-//      GET  /api/orders                -> lista comenzilor active (pt panoul bucatariei)
+//      POST /api/login                 -> login bucatarie (user+parola -> token)
+//      POST /api/orders                -> creeaza o comanda noua (necesita login)
+//      GET  /api/orders                -> lista comenzilor active ale restaurantului logat (necesita login)
 //      GET  /api/orders/by-number/:n   -> gaseste o comanda dupa numarul de pe bon
 //      GET  /api/orders/:id            -> starea unei comenzi (pt clientul care asteapta)
-//      POST /api/orders/:id/ready      -> marcheaza "gata" + trimite notificarea reala
-//      POST /api/orders/:id/done       -> marcheaza "ridicata"
+//      POST /api/orders/:id/ready      -> marcheaza "gata" + trimite notificarea reala (necesita login)
+//      POST /api/orders/:id/done       -> marcheaza "ridicata" (necesita login)
 //      POST /api/orders/:id/subscribe  -> telefonul clientului se "aboneaza" la notificari
 //      GET  /api/vapid-public-key      -> cheia publica necesara pt notificari push
 //      GET  /api/orders/:id/qrcode.png -> imaginea cu codul QR al comenzii (scanabil)
+//      POST /api/admin/restaurants           -> (doar tu) creeaza un cont nou de restaurant
+//      GET  /api/admin/restaurants           -> (doar tu) lista restaurantelor
+//      POST /api/admin/restaurants/:id/toggle -> (doar tu) activeaza/dezactiveaza un restaurant
 //
-// NOTA: comenzile se tin acum in MongoDB (baza de date persistenta), nu mai
-// in memorie - asa ca nu se pierd cand serverul reporneste/adoarme.
+// NOTA: comenzile si restaurantele se tin in MongoDB (baza de date persistenta),
+// nu in memorie - asa ca nu se pierd cand serverul reporneste/adoarme.
 
 const express = require('express');
 const webpush = require('web-push');
 const crypto = require('crypto');
 const path = require('path');
-const { MongoClient } = require('mongodb');
+const { MongoClient, ObjectId } = require('mongodb');
 const QRCode = require('qrcode');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 
 const app = express();
 app.use(express.json());
@@ -46,6 +53,21 @@ if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
 }
 
 // ---------------------------------------------------------
+// JWT_SECRET e folosit ca sa "semnam" biletele de login (token-urile)
+// ale bucatariilor, ca sa nu poata fi falsificate. ADMIN_KEY e parola
+// TA, pentru pagina secreta de administrare (/admin.html). Ambele vin
+// din Environment Variables pe Render - nu sunt scrise in cod.
+const JWT_SECRET = process.env.JWT_SECRET;
+const ADMIN_KEY = process.env.ADMIN_KEY;
+
+if (!JWT_SECRET) {
+  console.error('LIPSESTE variabila de mediu JWT_SECRET. Seteaz-o in Render, in sectiunea "Environment".');
+}
+if (!ADMIN_KEY) {
+  console.error('LIPSESTE variabila de mediu ADMIN_KEY. Seteaz-o in Render, in sectiunea "Environment".');
+}
+
+// ---------------------------------------------------------
 // Conectarea la baza de date (MongoDB Atlas).
 // Adresa vine dintr-o variabila de mediu (Environment Variable) setata
 // pe Render - NU e scrisa direct in cod, ca sa nu fie vizibila pe GitHub.
@@ -55,12 +77,14 @@ if (!MONGODB_URI) {
 }
 
 let ordersCollection = null;
+let restaurantsCollection = null;
 
 async function connectToDatabase() {
   const client = new MongoClient(MONGODB_URI);
   await client.connect();
   const db = client.db(); // foloseste baza de date din adresa (ex: "orderping")
   ordersCollection = db.collection('orders');
+  restaurantsCollection = db.collection('restaurants');
   console.log('Conectat la MongoDB.');
 }
 
@@ -71,6 +95,16 @@ function publicOrder(o) {
     status: o.status,
     createdAt: o.createdAt,
     readyAt: o.readyAt || null,
+  };
+}
+
+function publicRestaurant(r) {
+  return {
+    id: r._id.toString(),
+    name: r.name,
+    username: r.username,
+    active: r.active !== false,
+    createdAt: r.createdAt,
   };
 }
 
@@ -118,16 +152,88 @@ async function notifyOrderReady(order) {
 }
 
 // ---------------------------------------------------------
+// Autentificare bucatarie ("e nevoie sa fii logat ca sa faci asta").
+// Cere un antet "Authorization: Bearer <token>" primit la login.
+// Verifica si daca restaurantul e inca activ - daca a fost dezactivat
+// din panoul de admin, accesul se taie imediat, chiar daca token-ul
+// tehnic mai e valabil.
+async function requireRestaurant(req, res, next) {
+  try {
+    const header = req.get('authorization') || '';
+    const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+    if (!token) return res.status(401).json({ error: 'neautentificat' });
+
+    let payload;
+    try {
+      payload = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(401).json({ error: 'token_invalid' });
+    }
+
+    const restaurant = await restaurantsCollection.findOne({ _id: new ObjectId(payload.restaurantId) });
+    if (!restaurant || restaurant.active === false) {
+      return res.status(401).json({ error: 'cont_inactiv' });
+    }
+
+    req.restaurant = restaurant;
+    next();
+  } catch (err) {
+    console.error('Eroare la autentificare:', err);
+    res.status(500).json({ error: 'eroare_server' });
+  }
+}
+
+// Protectie pentru rutele de admin - cere antetul "x-admin-key" cu
+// valoarea exacta a variabilei de mediu ADMIN_KEY. Doar tu cunosti
+// aceasta cheie.
+function requireAdmin(req, res, next) {
+  const key = req.get('x-admin-key');
+  if (!ADMIN_KEY || key !== ADMIN_KEY) {
+    return res.status(401).json({ error: 'cheie_admin_invalida' });
+  }
+  next();
+}
+
+// ---------------------------------------------------------
 // Rute API
 
 app.get('/api/vapid-public-key', (req, res) => {
   res.json({ publicKey: VAPID_PUBLIC_KEY });
 });
 
-app.post('/api/orders', async (req, res) => {
+// ----- Login bucatarie -----
+app.post('/api/login', async (req, res) => {
+  try {
+    const { username, password } = req.body || {};
+    if (!username || !password) {
+      return res.status(400).json({ error: 'date_lipsa' });
+    }
+
+    const restaurant = await restaurantsCollection.findOne({ username: username.trim() });
+    if (!restaurant) return res.status(401).json({ error: 'date_gresite' });
+
+    const ok = await bcrypt.compare(password, restaurant.passwordHash);
+    if (!ok) return res.status(401).json({ error: 'date_gresite' });
+
+    if (restaurant.active === false) {
+      return res.status(401).json({ error: 'cont_inactiv' });
+    }
+
+    const token = jwt.sign({ restaurantId: restaurant._id.toString() }, JWT_SECRET, { expiresIn: '30d' });
+    res.json({ token: token, name: restaurant.name });
+  } catch (err) {
+    console.error('Eroare la login:', err);
+    res.status(500).json({ error: 'eroare_server' });
+  }
+});
+
+// ----- Comenzi (bucatarie - necesita login) -----
+
+app.post('/api/orders', requireRestaurant, async (req, res) => {
   try {
     const order = {
       _id: crypto.randomUUID(),
+      restaurantId: req.restaurant._id.toString(),
       number: Math.floor(Math.random() * 900) + 100, // 100-999
       status: 'pending',
       createdAt: Date.now(),
@@ -142,10 +248,10 @@ app.post('/api/orders', async (req, res) => {
   }
 });
 
-app.get('/api/orders', async (req, res) => {
+app.get('/api/orders', requireRestaurant, async (req, res) => {
   try {
     const list = await ordersCollection
-      .find({ status: { $ne: 'done' } })
+      .find({ restaurantId: req.restaurant._id.toString(), status: { $ne: 'done' } })
       .sort({ createdAt: 1 })
       .toArray();
     res.json(list.map(publicOrder));
@@ -154,6 +260,41 @@ app.get('/api/orders', async (req, res) => {
     res.status(500).json({ error: 'eroare_server' });
   }
 });
+
+app.post('/api/orders/:id/ready', requireRestaurant, async (req, res) => {
+  try {
+    const order = await ordersCollection.findOne({ _id: req.params.id, restaurantId: req.restaurant._id.toString() });
+    if (!order) return res.status(404).json({ error: 'negasita' });
+
+    const readyAt = Date.now();
+    await ordersCollection.updateOne({ _id: order._id }, { $set: { status: 'ready', readyAt } });
+    res.json(publicOrder({ ...order, status: 'ready', readyAt }));
+
+    // trimitem notificarea dupa ce am raspuns, ca bucataria sa nu astepte
+    notifyOrderReady(order).catch(err => console.error('notifyOrderReady a esuat:', err));
+  } catch (err) {
+    console.error('Eroare la marcarea comenzii gata:', err);
+    res.status(500).json({ error: 'eroare_server' });
+  }
+});
+
+app.post('/api/orders/:id/done', requireRestaurant, async (req, res) => {
+  try {
+    const doneAt = Date.now();
+    const result = await ordersCollection.findOneAndUpdate(
+      { _id: req.params.id, restaurantId: req.restaurant._id.toString() },
+      { $set: { status: 'done', doneAt } },
+      { returnDocument: 'after' }
+    );
+    if (!result) return res.status(404).json({ error: 'negasita' });
+    res.json(publicOrder(result));
+  } catch (err) {
+    console.error('Eroare la marcarea comenzii ridicata:', err);
+    res.status(500).json({ error: 'eroare_server' });
+  }
+});
+
+// ----- Comenzi (client - fara login, oricine are link-ul/codul QR) -----
 
 app.get('/api/orders/by-number/:number', async (req, res) => {
   try {
@@ -178,39 +319,6 @@ app.get('/api/orders/:id', async (req, res) => {
     res.json(publicOrder(order));
   } catch (err) {
     console.error('Eroare la citire comanda:', err);
-    res.status(500).json({ error: 'eroare_server' });
-  }
-});
-
-app.post('/api/orders/:id/ready', async (req, res) => {
-  try {
-    const order = await ordersCollection.findOne({ _id: req.params.id });
-    if (!order) return res.status(404).json({ error: 'negasita' });
-
-    const readyAt = Date.now();
-    await ordersCollection.updateOne({ _id: order._id }, { $set: { status: 'ready', readyAt } });
-    res.json(publicOrder({ ...order, status: 'ready', readyAt }));
-
-    // trimitem notificarea dupa ce am raspuns, ca bucataria sa nu astepte
-    notifyOrderReady(order).catch(err => console.error('notifyOrderReady a esuat:', err));
-  } catch (err) {
-    console.error('Eroare la marcarea comenzii gata:', err);
-    res.status(500).json({ error: 'eroare_server' });
-  }
-});
-
-app.post('/api/orders/:id/done', async (req, res) => {
-  try {
-    const doneAt = Date.now();
-    const result = await ordersCollection.findOneAndUpdate(
-      { _id: req.params.id },
-      { $set: { status: 'done', doneAt } },
-      { returnDocument: 'after' }
-    );
-    if (!result) return res.status(404).json({ error: 'negasita' });
-    res.json(publicOrder(result));
-  } catch (err) {
-    console.error('Eroare la marcarea comenzii ridicata:', err);
     res.status(500).json({ error: 'eroare_server' });
   }
 });
@@ -251,6 +359,58 @@ app.post('/api/orders/:id/subscribe', async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     console.error('Eroare la abonare:', err);
+    res.status(500).json({ error: 'eroare_server' });
+  }
+});
+
+// ----- Administrare restaurante (doar tu, cu ADMIN_KEY) -----
+
+app.post('/api/admin/restaurants', requireAdmin, async (req, res) => {
+  try {
+    const { name, username, password } = req.body || {};
+    if (!name || !username || !password) {
+      return res.status(400).json({ error: 'date_lipsa' });
+    }
+    const exists = await restaurantsCollection.findOne({ username: username.trim() });
+    if (exists) return res.status(409).json({ error: 'user_existent' });
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    const restaurant = {
+      name: name.trim(),
+      username: username.trim(),
+      passwordHash,
+      active: true,
+      createdAt: Date.now(),
+    };
+    const result = await restaurantsCollection.insertOne(restaurant);
+    restaurant._id = result.insertedId;
+    res.status(201).json(publicRestaurant(restaurant));
+  } catch (err) {
+    console.error('Eroare la creare restaurant:', err);
+    res.status(500).json({ error: 'eroare_server' });
+  }
+});
+
+app.get('/api/admin/restaurants', requireAdmin, async (req, res) => {
+  try {
+    const list = await restaurantsCollection.find({}).sort({ createdAt: -1 }).toArray();
+    res.json(list.map(publicRestaurant));
+  } catch (err) {
+    console.error('Eroare la listare restaurante:', err);
+    res.status(500).json({ error: 'eroare_server' });
+  }
+});
+
+app.post('/api/admin/restaurants/:id/toggle', requireAdmin, async (req, res) => {
+  try {
+    const restaurant = await restaurantsCollection.findOne({ _id: new ObjectId(req.params.id) });
+    if (!restaurant) return res.status(404).json({ error: 'negasit' });
+
+    const newActive = !(restaurant.active !== false);
+    await restaurantsCollection.updateOne({ _id: restaurant._id }, { $set: { active: newActive } });
+    res.json(publicRestaurant({ ...restaurant, active: newActive }));
+  } catch (err) {
+    console.error('Eroare la activare/dezactivare restaurant:', err);
     res.status(500).json({ error: 'eroare_server' });
   }
 });
