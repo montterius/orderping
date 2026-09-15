@@ -301,11 +301,16 @@ app.get('/api/orders/by-number/:number', async (req, res) => {
     const num = parseInt(req.params.number, 10);
     if (Number.isNaN(num)) return res.status(400).json({ error: 'numar invalid' });
 
-    const matches = await ordersCollection.find({ number: num }).sort({ createdAt: -1 }).toArray();
+    // O comanda "ridicata" (status "done") e considerata inactiva/finalizata -
+    // nu mai trebuie sa poata fi gasita prin cautarea manuala dupa numar.
+    // Asta evita ca un numar vechi, deja incheiat, sa fie confundat cu unul nou.
+    const matches = await ordersCollection
+      .find({ number: num, status: { $ne: 'done' } })
+      .sort({ createdAt: -1 })
+      .toArray();
     if (matches.length === 0) return res.status(404).json({ error: 'negasita' });
 
-    const chosen = matches.find(o => o.status !== 'done') || matches[0];
-    res.json(publicOrder(chosen));
+    res.json(publicOrder(matches[0]));
   } catch (err) {
     console.error('Eroare la cautare comanda:', err);
     res.status(500).json({ error: 'eroare_server' });
