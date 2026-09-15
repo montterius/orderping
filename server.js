@@ -7,7 +7,8 @@
 //      POST /api/login                 -> login bucatarie (user+parola -> token)
 //      POST /api/orders                -> creeaza o comanda noua (necesita login)
 //      GET  /api/orders                -> lista comenzilor active ale restaurantului logat (necesita login)
-//      GET  /api/orders/by-number/:n   -> gaseste o comanda dupa numarul de pe bon
+//      GET  /api/restaurants           -> lista restaurantelor active (doar nume, pt alegerea restaurantului de catre client)
+//      GET  /api/orders/by-number/:n   -> gaseste o comanda dupa numarul de pe bon SI restaurant (?restaurantId=...)
 //      GET  /api/orders/:id            -> starea unei comenzi (pt clientul care asteapta)
 //      POST /api/orders/:id/ready      -> marcheaza "gata" + trimite notificarea reala (necesita login)
 //      POST /api/orders/:id/done       -> marcheaza "ridicata" (necesita login)
@@ -296,16 +297,39 @@ app.post('/api/orders/:id/done', requireRestaurant, async (req, res) => {
 
 // ----- Comenzi (client - fara login, oricine are link-ul/codul QR) -----
 
+// Lista restaurantelor active - publica, fara date sensibile (doar id + nume).
+// O foloseste pagina clientului ca sa poata alege restaurantul inainte de a
+// cauta manual un numar de comanda, ca sa nu se incurce doua restaurante
+// diferite care au din intamplare comenzi cu acelasi numar.
+app.get('/api/restaurants', async (req, res) => {
+  try {
+    const list = await restaurantsCollection
+      .find({ active: { $ne: false } })
+      .sort({ name: 1 })
+      .toArray();
+    res.json(list.map(r => ({ id: r._id.toString(), name: r.name })));
+  } catch (err) {
+    console.error('Eroare la listare restaurante (public):', err);
+    res.status(500).json({ error: 'eroare_server' });
+  }
+});
+
 app.get('/api/orders/by-number/:number', async (req, res) => {
   try {
     const num = parseInt(req.params.number, 10);
     if (Number.isNaN(num)) return res.status(400).json({ error: 'numar invalid' });
 
+    // Clientul trebuie sa spuna si la ce restaurant e (ales dintr-o lista in
+    // pagina), altfel doua restaurante diferite ar putea avea din intamplare
+    // comenzi cu acelasi numar si s-ar incurca una cu cealalta.
+    const restaurantId = req.query.restaurantId;
+    if (!restaurantId) return res.status(400).json({ error: 'restaurant_lipsa' });
+
     // O comanda "ridicata" (status "done") e considerata inactiva/finalizata -
     // nu mai trebuie sa poata fi gasita prin cautarea manuala dupa numar.
     // Asta evita ca un numar vechi, deja incheiat, sa fie confundat cu unul nou.
     const matches = await ordersCollection
-      .find({ number: num, status: { $ne: 'done' } })
+      .find({ number: num, restaurantId: restaurantId, status: { $ne: 'done' } })
       .sort({ createdAt: -1 })
       .toArray();
     if (matches.length === 0) return res.status(404).json({ error: 'negasita' });
