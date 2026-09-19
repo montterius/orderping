@@ -7,8 +7,8 @@
 //      POST /api/login                 -> login bucatarie (user+parola -> token)
 //      POST /api/orders                -> creeaza o comanda noua (necesita login)
 //      GET  /api/orders                -> lista comenzilor active ale restaurantului logat (necesita login)
-//      GET  /api/restaurants           -> lista restaurantelor active (doar nume, pt alegerea restaurantului de catre client)
-//      GET  /api/orders/by-number/:n   -> gaseste o comanda dupa numarul de pe bon SI restaurant (?restaurantId=...)
+//      GET  /api/restaurants           -> lista restaurantelor active (doar nume) - nefolosita de pagina clientului momentan, pastrata pt viitor
+//      GET  /api/orders/by-number/:n   -> gaseste o comanda dupa numar SI restaurant (?restaurantId=...) - nefolosita de pagina clientului momentan, pastrata pt viitor
 //      GET  /api/orders/:id            -> starea unei comenzi (pt clientul care asteapta)
 //      POST /api/orders/:id/ready      -> marcheaza "gata" + trimite notificarea reala (necesita login)
 //      POST /api/orders/:id/done       -> marcheaza "ridicata" (necesita login)
@@ -89,14 +89,16 @@ async function connectToDatabase() {
   console.log('Conectat la MongoDB.');
 }
 
-function publicOrder(o) {
-  return {
+function publicOrder(o, extra) {
+  const out = {
     id: o._id,
     number: o.number,
     status: o.status,
     createdAt: o.createdAt,
     readyAt: o.readyAt || null,
   };
+  if (extra && extra.restaurantName) out.restaurantName = extra.restaurantName;
+  return out;
 }
 
 function publicRestaurant(r) {
@@ -127,9 +129,9 @@ async function pruneOldOrders() {
 // Trimite notificarea reala (push) catre toate telefoanele
 // abonate la acea comanda. Scoate din lista abonarile care
 // nu mai sunt valabile (telefonul a dezinstalat/refuzat).
-async function notifyOrderReady(order) {
+async function notifyOrderReady(order, restaurantName) {
   const payload = JSON.stringify({
-    title: '🔔 Comanda ta e gata!',
+    title: restaurantName ? ('🔔 Comanda de la ' + restaurantName + ' e gata!') : '🔔 Comanda ta e gata!',
     body: 'Comanda #' + order.number + ' e gata de ridicare.',
     orderId: order._id,
   });
@@ -272,7 +274,7 @@ app.post('/api/orders/:id/ready', requireRestaurant, async (req, res) => {
     res.json(publicOrder({ ...order, status: 'ready', readyAt }));
 
     // trimitem notificarea dupa ce am raspuns, ca bucataria sa nu astepte
-    notifyOrderReady(order).catch(err => console.error('notifyOrderReady a esuat:', err));
+    notifyOrderReady(order, req.restaurant.name).catch(err => console.error('notifyOrderReady a esuat:', err));
   } catch (err) {
     console.error('Eroare la marcarea comenzii gata:', err);
     res.status(500).json({ error: 'eroare_server' });
@@ -298,9 +300,10 @@ app.post('/api/orders/:id/done', requireRestaurant, async (req, res) => {
 // ----- Comenzi (client - fara login, oricine are link-ul/codul QR) -----
 
 // Lista restaurantelor active - publica, fara date sensibile (doar id + nume).
-// O foloseste pagina clientului ca sa poata alege restaurantul inainte de a
-// cauta manual un numar de comanda, ca sa nu se incurce doua restaurante
-// diferite care au din intamplare comenzi cu acelasi numar.
+// NOTA: pagina clientului (public/index.html) nu mai foloseste aceasta ruta -
+// acum clientul urmareste comenzile doar prin scanarea codului QR, care
+// identifica deja exact comanda si restaurantul. Ramane disponibila in caz
+// ca va fi nevoie de ea din nou mai tarziu.
 app.get('/api/restaurants', async (req, res) => {
   try {
     const list = await restaurantsCollection
@@ -314,6 +317,8 @@ app.get('/api/restaurants', async (req, res) => {
   }
 });
 
+// NOTA: pagina clientului nu mai foloseste aceasta ruta (vezi nota de mai
+// sus la /api/restaurants) - ramane disponibila pentru eventuale nevoi viitoare.
 app.get('/api/orders/by-number/:number', async (req, res) => {
   try {
     const num = parseInt(req.params.number, 10);
@@ -345,7 +350,18 @@ app.get('/api/orders/:id', async (req, res) => {
   try {
     const order = await ordersCollection.findOne({ _id: req.params.id });
     if (!order) return res.status(404).json({ error: 'negasita' });
-    res.json(publicOrder(order));
+
+    // Aratam si numele restaurantului, ca clientul sa stie clar "a cui" e
+    // fiecare comanda (util mai ales cand urmareste mai multe comenzi deodata).
+    let restaurantName = null;
+    if (order.restaurantId) {
+      try {
+        const restaurant = await restaurantsCollection.findOne({ _id: new ObjectId(order.restaurantId) });
+        if (restaurant) restaurantName = restaurant.name;
+      } catch (e) { /* id invalid sau restaurant sters - ignoram, ramane fara nume */ }
+    }
+
+    res.json(publicOrder(order, { restaurantName }));
   } catch (err) {
     console.error('Eroare la citire comanda:', err);
     res.status(500).json({ error: 'eroare_server' });
