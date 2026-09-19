@@ -137,6 +137,16 @@
   .find-other:hover{color:var(--bell-dim);}
   @media (prefers-reduced-motion: reduce){.r-dots span,.r-ready-badge,.r-ready-badge.pulse{animation:none!important;}}
 
+  /* MULTIPLE TRACKED ORDERS */
+  .order-card{background:#faf9f6;border:1px solid var(--paper-line);border-radius:10px;padding:14px 16px;margin-bottom:12px;text-align:left;}
+  .oc-top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;}
+  .oc-restaurant{font-family:var(--font-display);font-weight:700;font-size:.92rem;color:var(--ink);}
+  .oc-dismiss{background:none;border:none;color:var(--ink-soft);font-size:1rem;cursor:pointer;line-height:1;padding:2px 4px;}
+  .oc-dismiss:hover{color:var(--danger);}
+  .oc-number{font-family:var(--font-mono);font-weight:700;font-size:1.6rem;color:var(--ink);margin-bottom:6px;}
+  .oc-number .hash{color:var(--ink-soft);font-size:1rem;}
+  .status-done{background:rgba(107,114,128,.15);color:var(--ink-soft);}
+
   /* IN-APP BROWSER NOTICE */
   .inapp-note{width:100%;max-width:380px;background:#fff8ea;border:1px solid #f2d9a3;color:#6b4a12;border-radius:10px;padding:14px 16px;margin-bottom:16px;font-size:.85rem;line-height:1.5;text-align:left;}
   .inapp-note b{font-weight:800;}
@@ -206,46 +216,26 @@
   <div class="receipt" id="receipt-card">
     <div class="r-brand">🔔 OrderPing</div>
 
-    <div id="client-lookup">
-      <div class="r-label" id="restaurant-picker-label" hidden>La ce restaurant ești?</div>
-      <select class="restaurant-select" id="restaurant-select" hidden></select>
-      <div class="r-label">Introdu numărul comenzii tale</div>
-      <p class="r-substatus">Găsești numărul pe bonul de la casă.</p>
-      <input type="text" inputmode="numeric" maxlength="3" class="code-input" id="order-code-input" placeholder="482">
-      <button class="btn-track" id="btn-track">Urmărește comanda</button>
-      <p class="lookup-error" id="lookup-error" hidden></p>
+    <div id="client-empty">
+      <div class="r-label">Nicio comandă urmărită</div>
+      <p class="r-substatus">Scanează codul QR de pe bon cu camera telefonului tău, ca să începi să urmărești o comandă.</p>
     </div>
 
-    <div id="client-tracking" hidden>
-      <div class="r-label">Numărul comenzii tale</div>
-      <div class="r-number"><span class="hash">#</span><span id="r-number-val">000</span></div>
+    <div id="client-orders" hidden>
+      <div id="push-enable-row">
+        <p class="r-substatus">Apasă butonul ca să activezi notificarea reală pe telefon, pentru toate comenzile tale.</p>
+        <button class="r-start-btn" id="btn-enable-push">Anunță-mă când sunt gata 🔔</button>
+      </div>
+      <p class="r-substatus" id="push-status-sub" hidden></p>
+      <button class="find-other" id="btn-ios-more-info" hidden>Vrei să afli chiar și cu ecranul blocat? Apasă aici</button>
+      <p class="r-limits" id="r-ios-detail" hidden></p>
+      <p class="r-limits" id="r-limits-note" hidden></p>
+
       <hr class="r-rule">
 
-      <div id="r-start-screen">
-        <p class="r-substatus">Apasă butonul de mai jos ca să activezi notificarea reală pe telefon.</p>
-        <button class="r-start-btn" id="btn-start-waiting">Anunță-mă când e gata 🔔</button>
-      </div>
+      <div id="orders-cards"></div>
 
-      <div id="r-waiting-screen" hidden>
-        <div class="r-status-line">Se pregătește<span class="r-dots"><span>.</span><span>.</span><span>.</span></span></div>
-        <p class="r-substatus" id="r-waiting-sub">Poți bloca ecranul — te anunțăm automat.</p>
-        <button class="find-other" id="btn-ios-more-info" hidden>Vrei să afli chiar și cu ecranul blocat? Apasă aici</button>
-        <p class="r-limits" id="r-ios-detail" hidden></p>
-      </div>
-
-      <div id="r-ready-screen" hidden>
-        <div class="r-ready-badge" id="r-ready-badge">✅</div>
-        <div class="r-status-line">Comanda ta e gata!</div>
-        <p class="r-substatus">Poți să o ridici de la tejghea, când vrei.</p>
-      </div>
-
-      <div id="r-done-screen" hidden>
-        <div class="r-status-line" style="color:var(--ink-soft)">Comandă ridicată</div>
-        <p class="r-substatus">Mulțumim! Poftă bună.</p>
-      </div>
-
-      <p class="r-limits" id="r-limits-note" hidden></p>
-      <button class="find-other" id="btn-find-other">Nu e comanda ta? Caută alt număr</button>
+      <p class="r-note">Ai comandă și de la alt restaurant? Scanează codul QR de pe bonul acela cu camera telefonului — se adaugă automat aici.</p>
     </div>
   </div>
   <button class="role-switch" id="switch-from-client">🔄 Schimbă rolul / testează ca bucătărie</button>
@@ -258,7 +248,8 @@
   "use strict";
 
   var ROLE_KEY = 'orderping_role';
-  var LAST_ORDER_KEY = 'orderping_last_order_id';
+  var ORDERS_KEY = 'orderping_tracked_orders';
+  var OLD_LAST_ORDER_KEY = 'orderping_last_order_id'; // versiune veche, cu o singura comanda urmarita
   var K_TOKEN_KEY = 'orderping_kitchen_token';
   var K_NAME_KEY = 'orderping_kitchen_name';
 
@@ -315,17 +306,21 @@
 
   // ================= ROLE ROUTING =================
   function goToRole(role){ safeSet(ROLE_KEY, role); render(); }
-  function resetRole(){ safeRemove(ROLE_KEY); safeRemove(LAST_ORDER_KEY); location.reload(); }
+  function resetRole(){ safeRemove(ROLE_KEY); safeRemove(ORDERS_KEY); location.reload(); }
 
   // Daca pagina a fost deschisa prin scanarea unui cod QR (adresa contine
-  // "?order=..."), il trecem direct pe client, fara sa mai aleaga rolul
-  // sau sa introduca manual vreun cod - QR-ul face treaba asta pentru el.
+  // "?order=..."), il trecem direct pe client si adaugam comanda in lista de
+  // comenzi urmarite (fara sa stearga comenzile deja urmarite - asa se pot
+  // urmari mai multe comenzi, de la restaurante diferite, in acelasi timp).
   (function checkQrOrderParam(){
     var params = new URLSearchParams(location.search);
     var orderIdFromQr = params.get('order');
     if(orderIdFromQr){
       safeSet(ROLE_KEY, 'client');
-      safeSet(LAST_ORDER_KEY, orderIdFromQr);
+      var ids = [];
+      try { ids = JSON.parse(safeGet(ORDERS_KEY) || '[]'); } catch(e) { ids = []; }
+      if(ids.indexOf(orderIdFromQr) === -1) ids.push(orderIdFromQr);
+      safeSet(ORDERS_KEY, JSON.stringify(ids));
       history.replaceState(null, '', location.pathname);
     }
   })();
@@ -502,23 +497,15 @@
   }
 
   function initClient(){
-    var elLookup = document.getElementById('client-lookup');
-    var elTracking = document.getElementById('client-tracking');
-    var elInput = document.getElementById('order-code-input');
-    var elError = document.getElementById('lookup-error');
-    var elNumberVal = document.getElementById('r-number-val');
-    var elStart = document.getElementById('r-start-screen');
-    var elWaiting = document.getElementById('r-waiting-screen');
-    var elWaitingSub = document.getElementById('r-waiting-sub');
-    var elReady = document.getElementById('r-ready-screen');
-    var elDone = document.getElementById('r-done-screen');
-    var elLimits = document.getElementById('r-limits-note');
+    var elEmpty = document.getElementById('client-empty');
+    var elOrdersWrap = document.getElementById('client-orders');
+    var elCardsWrap = document.getElementById('orders-cards');
+    var elPushEnableRow = document.getElementById('push-enable-row');
+    var elBtnEnablePush = document.getElementById('btn-enable-push');
+    var elPushStatusSub = document.getElementById('push-status-sub');
     var elIosMoreBtn = document.getElementById('btn-ios-more-info');
     var elIosDetail = document.getElementById('r-ios-detail');
-    var card = document.getElementById('receipt-card');
-    var elRestaurantLabel = document.getElementById('restaurant-picker-label');
-    var elRestaurantSelect = document.getElementById('restaurant-select');
-    var currentRestaurantId = null;
+    var elLimits = document.getElementById('r-limits-note');
 
     // Unele aplicatii (scannere de cod QR, retele sociale, etc.) deschid
     // link-urile intr-un "browser" propriu, mai limitat decat Safari real -
@@ -543,48 +530,33 @@
       elIosMoreBtn.hidden = true;
     });
 
-    // Ca sa nu se incurce comenzi cu acelasi numar de la restaurante diferite,
-    // clientul trebuie sa aleaga restaurantul inainte de a cauta manual un numar.
-    // Daca exista un singur restaurant activ, il alegem automat, fara sa mai
-    // aratam nicio lista (nu are rost sa complicam ecranul pentru un singur caz).
-    function loadRestaurants(){
-      api('/api/restaurants').then(function(list){
-        if(!list || list.length === 0){
-          elError.hidden = false;
-          elError.textContent = 'Niciun restaurant activ momentan. Reîncarcă pagina sau scanează codul QR de pe bon.';
-          return;
-        }
-        if(list.length === 1){
-          currentRestaurantId = list[0].id;
-          elRestaurantLabel.hidden = true;
-          elRestaurantSelect.hidden = true;
-        } else {
-          elRestaurantSelect.innerHTML = '';
-          list.forEach(function(r){
-            var opt = document.createElement('option');
-            opt.value = r.id; opt.textContent = r.name;
-            elRestaurantSelect.appendChild(opt);
-          });
-          currentRestaurantId = list[0].id;
-          elRestaurantLabel.hidden = false;
-          elRestaurantSelect.hidden = false;
-        }
-      }).catch(function(){
-        elError.hidden = false;
-        elError.textContent = 'Nu am putut încărca lista restaurantelor. Reîncarcă pagina.';
-      });
+    // O versiune mai veche a paginii tinea minte o singura comanda urmarita
+    // (sub o alta "eticheta" in memoria telefonului). Daca cineva revine cu
+    // acea versiune inca salvata, o mutam automat in noua lista de comenzi.
+    (function migrateOldSingleOrder(){
+      var old = safeGet(OLD_LAST_ORDER_KEY);
+      if(old){
+        var ids = getTrackedIds();
+        if(ids.indexOf(old) === -1){ ids.push(old); setTrackedIds(ids); }
+        safeRemove(OLD_LAST_ORDER_KEY);
+      }
+    })();
+
+    function getTrackedIds(){
+      try { return JSON.parse(safeGet(ORDERS_KEY) || '[]'); } catch(e){ return []; }
+    }
+    function setTrackedIds(ids){ safeSet(ORDERS_KEY, JSON.stringify(ids)); }
+    function removeTrackedId(id){
+      var ids = getTrackedIds().filter(function(x){ return x !== id; });
+      setTrackedIds(ids);
+      delete orderData[id];
+      delete lastStatusById[id];
     }
 
-    elRestaurantSelect.addEventListener('change', function(){
-      currentRestaurantId = elRestaurantSelect.value;
-    });
-
     var audioCtx = null;
-    var hasStarted = false;
-    var lastStatus = null;
+    var orderData = {};       // id comanda -> ultimele date primite de la server (nume restaurant, status, numar)
+    var lastStatusById = {};  // id comanda -> ultimul status stiut, ca sa observam cand devine "gata"
     var pollTimer = null;
-    var currentOrderId = null;
-    var pushEnabled = false;
 
     function beep(){
       try{
@@ -647,8 +619,41 @@
     var isIOS = /iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     var isStandalone = (window.navigator.standalone === true) || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
 
-    document.getElementById('btn-start-waiting').addEventListener('click', function(){
-      hasStarted = true;
+    // Aratam butonul "Anunta-ma" doar daca inca nu am cerut voie pentru
+    // notificari SAU nu exista nicio comanda de urmarit. Odata permisiunea
+    // acordata, ramane valabila pe acest telefon si pt comenzile viitoare -
+    // nu mai trebuie aparuta din nou la fiecare comanda noua scanata.
+    function updatePushUi(){
+      var alreadyGranted = ('Notification' in window) && Notification.permission === 'granted';
+      elPushEnableRow.hidden = alreadyGranted || getTrackedIds().length === 0;
+    }
+
+    function handlePushResult(res){
+      elPushStatusSub.hidden = false;
+      if(res.ok){
+        elPushStatusSub.textContent = 'Poți bloca ecranul sau închide telefonul în buzunar — te anunțăm automat.';
+      } else if(res.reason === 'denied'){
+        elPushStatusSub.textContent = 'Nu ai permis notificările — ține pagina deschisă și cu ecranul pornit ca să auzi alerta.';
+      } else if(isIOS && !isStandalone){
+        elPushStatusSub.textContent = 'Te rugăm să nu blochezi telefonul și să ții pagina deschisă pe ecran — comenzile tale pot fi gata în orice clipă, iar noi te anunțăm chiar aici, cu sunet.';
+        elIosMoreBtn.hidden = false;
+      } else {
+        elPushStatusSub.textContent = 'Notificarea în fundal nu e susținută de acest telefon/browser — te rugăm să nu blochezi telefonul și să ții pagina deschisă, ca să auzi alerta când comenzile sunt gata.';
+      }
+      if(!navigator.vibrate){
+        elLimits.hidden = false;
+        elLimits.textContent = 'Notă: pe iPhone, vibrația nu e susținută (limitare Apple) — dar sunetul va funcționa cât timp ții pagina deschisă și ecranul pornit.';
+      }
+      elPushEnableRow.hidden = true;
+    }
+
+    function enablePushForAll(){
+      getTrackedIds().forEach(function(id){
+        enablePush(id).then(handlePushResult);
+      });
+    }
+
+    elBtnEnablePush.addEventListener('click', function(){
       try{
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         if(audioCtx.state === 'suspended'){ audioCtx.resume(); }
@@ -659,109 +664,87 @@
         warm.connect(warmGain).connect(audioCtx.destination);
         warm.start(); warm.stop(audioCtx.currentTime + 0.01);
       }catch(e){}
-      elStart.hidden = true;
-
-      if(lastStatus === 'ready') elReady.hidden = false;
-      else if(lastStatus === 'done') elDone.hidden = false;
-      else elWaiting.hidden = false;
-
-      enablePush(currentOrderId).then(function(res){
-        if(res.ok){
-          pushEnabled = true;
-          elWaitingSub.textContent = 'Poți bloca ecranul sau închide telefonul în buzunar — te anunțăm automat.';
-        } else if(res.reason === 'denied'){
-          elWaitingSub.textContent = 'Nu ai permis notificările — ține pagina deschisă și cu ecranul pornit ca să auzi alerta.';
-        } else if(isIOS && !isStandalone){
-          elWaitingSub.textContent = 'Te rugăm să nu blochezi telefonul și să ții pagina deschisă pe ecran — comanda ta poate fi gata în orice clipă, iar noi te anunțăm chiar aici, cu sunet.';
-          elIosMoreBtn.hidden = false;
-        } else {
-          elWaitingSub.textContent = 'Notificarea în fundal nu e susținută de acest telefon/browser — te rugăm să nu blochezi telefonul și să ții pagina deschisă, ca să auzi alerta când comanda e gata.';
-        }
-        if(!navigator.vibrate){ elLimits.hidden = false; elLimits.textContent = 'Notă: pe iPhone, vibrația nu e susținută (limitare Apple) — dar sunetul va funcționa cât timp ții pagina deschisă și ecranul pornit.'; }
-      });
+      enablePushForAll();
     });
 
-    function applyStatus(o){
-      var changed = (lastStatus !== null && lastStatus !== o.status);
-      lastStatus = o.status;
-      elNumberVal.textContent = o.number;
-      if(!hasStarted) return;
-
-      elWaiting.hidden = o.status !== 'pending';
-      elReady.hidden = o.status !== 'ready';
-      elDone.hidden = o.status !== 'done';
-      card.classList.toggle('state-ready', o.status === 'ready');
-
-      if(changed && o.status === 'ready'){
-        document.getElementById('r-ready-badge').classList.add('pulse');
-        notifyForeground();
-      }
+    function statusLabel(status){
+      if(status === 'ready') return '● gata de ridicare';
+      if(status === 'done') return '● ridicată';
+      return '● în pregătire';
+    }
+    function statusClass(status){
+      if(status === 'ready') return 'status-ready';
+      if(status === 'done') return 'status-done';
+      return 'status-pending';
     }
 
-    function startTracking(orderId){
-      if(pollTimer){ clearInterval(pollTimer); pollTimer = null; }
-      currentOrderId = orderId;
-      hasStarted = false; lastStatus = null;
-      elStart.hidden = false; elWaiting.hidden = true; elReady.hidden = true; elDone.hidden = true; elLimits.hidden = true;
-      elIosMoreBtn.hidden = true; elIosDetail.hidden = true;
-      card.classList.remove('state-ready');
+    function renderCards(){
+      var ids = getTrackedIds();
+      if(ids.length === 0){
+        elEmpty.hidden = false;
+        elOrdersWrap.hidden = true;
+        return;
+      }
+      elEmpty.hidden = true;
+      elOrdersWrap.hidden = false;
+      updatePushUi();
 
-      function poll(){
-        api('/api/orders/'+orderId).then(function(o){
-          safeSet(LAST_ORDER_KEY, orderId);
-          elLookup.hidden = true; elTracking.hidden = false;
-          applyStatus(o);
+      elCardsWrap.innerHTML = '';
+      ids.forEach(function(id){
+        var o = orderData[id];
+        var restaurantName = (o && o.restaurantName) ? o.restaurantName : 'Se încarcă...';
+        var number = (o && o.number != null) ? o.number : '···';
+        var status = o ? o.status : 'pending';
+
+        var wrap = document.createElement('div');
+        wrap.className = 'order-card';
+        wrap.innerHTML =
+          '<div class="oc-top">'+
+            '<div class="oc-restaurant">🍴 '+restaurantName+'</div>'+
+            '<button class="oc-dismiss" title="Elimină din listă">✕</button>'+
+          '</div>'+
+          '<div class="oc-number"><span class="hash">#</span>'+number+'</div>'+
+          '<div class="oc-status pill '+statusClass(status)+'">'+statusLabel(status)+'</div>';
+
+        wrap.querySelector('.oc-dismiss').addEventListener('click', function(){
+          removeTrackedId(id);
+          renderCards();
+        });
+        elCardsWrap.appendChild(wrap);
+      });
+    }
+
+    function pollAll(){
+      var ids = getTrackedIds();
+      if(ids.length === 0) return;
+      ids.forEach(function(id){
+        api('/api/orders/'+id).then(function(o){
+          var prevStatus = lastStatusById[id];
+          orderData[id] = o;
+          lastStatusById[id] = o.status;
+          if(prevStatus !== undefined && prevStatus !== 'ready' && o.status === 'ready'){
+            notifyForeground();
+          }
+          renderCards();
         }).catch(function(err){
           if(err.status === 404){
-            safeRemove(LAST_ORDER_KEY);
-            clearInterval(pollTimer); pollTimer = null;
-            elTracking.hidden = true; elLookup.hidden = false;
-            elError.hidden = false;
-            elError.textContent = 'Comanda nu mai există. Verifică numărul.';
+            removeTrackedId(id);
+            showToast('O comandă nu mai există și a fost eliminată din listă.');
+            renderCards();
           }
         });
-      }
-      poll();
-      pollTimer = setInterval(poll, 2000);
-    }
-
-    function doLookup(){
-      var raw = elInput.value.trim();
-      var num = parseInt(raw, 10);
-      elError.hidden = true;
-      if(!currentRestaurantId){
-        elError.hidden = false;
-        elError.textContent = 'Alege restaurantul din listă (sau reîncarcă pagina dacă lista nu s-a încărcat).';
-        return;
-      }
-      if(!raw || isNaN(num)){
-        elError.hidden = false; elError.textContent = 'Introdu un număr valid (cel de pe bon).';
-        return;
-      }
-      api('/api/orders/by-number/'+num+'?restaurantId='+encodeURIComponent(currentRestaurantId)).then(function(o){
-        startTracking(o.id);
-      }).catch(function(err){
-        elError.hidden = false;
-        elError.textContent = (err.status === 404)
-          ? ('Nu am găsit nicio comandă cu numărul #'+num+' la restaurantul ales. Verifică din nou pe bon.')
-          : 'A apărut o eroare la căutare. Încearcă din nou.';
       });
     }
 
-    document.getElementById('btn-track').addEventListener('click', doLookup);
-    elInput.addEventListener('keydown', function(e){ if(e.key === 'Enter') doLookup(); });
+    renderCards();
+    pollAll();
+    pollTimer = setInterval(pollAll, 2000);
 
-    document.getElementById('btn-find-other').addEventListener('click', function(){
-      if(pollTimer){ clearInterval(pollTimer); pollTimer = null; }
-      safeRemove(LAST_ORDER_KEY);
-      elTracking.hidden = true; elLookup.hidden = false;
-      elInput.value = ''; elError.hidden = true; elInput.focus();
-    });
-
-    loadRestaurants();
-
-    var lastOrderId = safeGet(LAST_ORDER_KEY);
-    if(lastOrderId) startTracking(lastOrderId);
+    // Daca telefonul a permis deja notificarile (de la o comanda anterioara),
+    // activam automat si pentru comenzile curente, fara sa mai cerem din nou.
+    if(('Notification' in window) && Notification.permission === 'granted'){
+      enablePushForAll();
+    }
   }
 
   render();
